@@ -15,8 +15,7 @@ pub enum GamesNames {
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
-    let url = std::env::var("DATABASE_URL")
-        .map_err(|_| anyhow::anyhow!("DATABASE_URL fehlt - siehe backend/.env.example"))?;
+    let url = "mysql://root:insy@127.0.0.1:3306/boardgametest";
 
     let pool = sqlx::mysql::MySqlPoolOptions::new()
         .max_connections(5)
