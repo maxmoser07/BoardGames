@@ -1,62 +1,134 @@
+/* =============================================================================
+   Connect Four – Brett
+   Diese Datei gehört zu `ConnectFour.tsx` / `useConnectFour.ts`. Beide Dateien
+   sind eingefroren, deshalb bleibt die Klassenstruktur unverändert:
+   .c4-wrapper  .c4-status  .c4-board  .c4-cell(.red|.yellow)  .c4-reset
+   Gestaltet wird nur über CSS; die Variablen kommen aus index.css.
+   ========================================================================== */
+
 .c4-wrapper {
-  font-family: system-ui, sans-serif;
-  text-align: center;
-  padding: 24px;
+  --cell: clamp(2.1rem, 8vw, 3.6rem);
+  --gap: clamp(0.25rem, 1.1vw, 0.5rem);
+  --disc-hole: color-mix(in srgb, var(--text-dim) 26%, transparent);
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 1.1rem 1rem 1.25rem;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.c4-wrapper h1 {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
 }
 
 .c4-status {
-  font-size: 1.2rem;
-  font-weight: 600;
-  margin-bottom: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.85rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  font-size: 1rem;
+  font-weight: 650;
+  color: var(--text);
 }
 
 .c4-board {
   display: grid;
-  grid-template-columns: repeat(7, 64px);
-  grid-template-rows: repeat(6, 64px);
-  gap: 8px;
-  background: #1e3a8a;
-  padding: 12px;
-  border-radius: 16px;
-  margin: 0 auto 20px;
-  width: max-content;
+  grid-template-columns: repeat(7, var(--cell));
+  grid-template-rows: repeat(6, var(--cell));
+  gap: var(--gap);
+  padding: var(--gap);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, var(--accent-strong), var(--accent));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -2px 6px rgba(0, 0, 0, 0.25),
+    var(--shadow-md);
 }
 
 .c4-cell {
-  width: 64px;
-  height: 64px;
+  position: relative;
+  width: var(--cell);
+  height: var(--cell);
+  padding: 0;
+  border: 0;
   border-radius: 50%;
-  border: none;
-  background: #e5e7eb;
+  background: var(--disc-hole);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.35);
   cursor: pointer;
-  transition: transform 0.1s ease;
+  transition: transform 120ms ease, box-shadow 120ms ease;
 }
 
-.c4-cell:hover:not(:disabled) {
-  transform: scale(1.05);
+/* Leere Felder reagieren, belegte sind `disabled` und werden vom Browser
+   bereits ignoriert – deshalb hier kein Hover. */
+.c4-cell:not(:disabled):hover {
+  transform: scale(1.06);
+}
+
+.c4-cell:not(:disabled):hover::after {
+  content: "";
+  position: absolute;
+  inset: 12%;
+  border-radius: 50%;
+  border: 2px dashed color-mix(in srgb, var(--text) 30%, transparent);
+}
+
+.c4-cell:not(:disabled):active {
+  transform: scale(0.96);
+}
+
+.c4-cell:focus-visible {
+  outline: 2px solid var(--accent-contrast);
+  outline-offset: 3px;
 }
 
 .c4-cell.red {
-  background: #ef4444;
   cursor: default;
+  background: radial-gradient(circle at 34% 28%, #ff9a9a 0%, var(--red) 55%, color-mix(in srgb, var(--red) 78%, #000) 100%);
+  box-shadow:
+    inset 0 -2px 4px rgba(0, 0, 0, 0.28),
+    0 2px 4px rgba(0, 0, 0, 0.25);
 }
 
 .c4-cell.yellow {
-  background: #facc15;
   cursor: default;
+  background: radial-gradient(circle at 34% 28%, #ffe08a 0%, var(--yellow) 55%, color-mix(in srgb, var(--yellow) 78%, #000) 100%);
+  box-shadow:
+    inset 0 -2px 4px rgba(0, 0, 0, 0.22),
+    0 2px 4px rgba(0, 0, 0, 0.25);
 }
 
 .c4-reset {
-  padding: 10px 24px;
-  font-size: 16px;
-  font-weight: 600;
-  border: none;
-  border-radius: 8px;
-  background: #1e3a8a;
-  color: white;
+  padding: 0.55rem 1.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 650;
   cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease;
 }
 
 .c4-reset:hover {
-  background: #172554;
+  background: var(--surface-3);
+  border-color: var(--border-strong);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .c4-cell,
+  .c4-cell:not(:disabled):hover,
+  .c4-cell:not(:disabled):active {
+    transform: none;
+  }
 }

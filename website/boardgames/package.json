@@ -7,9 +7,11 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test": "node --test scripts/*.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
+    "lucide-react": "^1.49.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
