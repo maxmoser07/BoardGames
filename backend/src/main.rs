@@ -15,7 +15,8 @@ pub enum GamesNames {
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
-    let url = "mysql://root:insy@127.0.0.1:3306/boardgametest";
+    let url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "mysql://boardgames:boardgames@127.0.0.1:3306/boardgames".to_string());
 
     let pool = sqlx::mysql::MySqlPoolOptions::new()
         .max_connections(5)

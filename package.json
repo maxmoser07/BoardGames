@@ -1,0 +1,20 @@
+{
+  "name": "boardgames",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Startskripte fuer Frontend (Vite) und Backend (axum/sqlx).",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "lint": "npm --prefix frontend run lint",
+    "test": "npm --prefix frontend run test",
+    "preview": "npm --prefix frontend run preview",
+    "backend": "cargo run --manifest-path backend/Cargo.toml",
+    "backend:check": "cargo check --manifest-path backend/Cargo.toml",
+    "setup": "npm install && npm --prefix frontend install",
+    "dev:all": "concurrently -n api,web -c magenta,cyan \"npm run backend\" \"npm run dev\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

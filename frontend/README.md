@@ -150,5 +150,6 @@ entsprechen den serverseitigen Prüfungen in `backend/src/api.rs` und sind in
   Rechner gebunden.
 * **Pop-up-Blocker.** Blockiert der Browser `window.open`, gibt das Dashboard
   einen Link statt des Fensters aus.
-* **`boardgames/boardgames/`** im Repository-Root ist ein veraltetes Duplikat
-  dieses Projekts und wird nicht mehr gepflegt.
+* **`boardgames/boardgames/`** war ein veraltetes Duplikat dieses Projekts. Es
+  wurde gelöscht, dieser Ordner ist aus `website/boardgames/` hervorgegangen;
+  das Original liegt in der Git-Historie.
