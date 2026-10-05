@@ -12,8 +12,8 @@ import { useNavigate } from "./router";
 import type { GameSession } from "./types";
 
 /**
- * Queransicht ├╝ber alle Spiele: laufende und beendete Sitzungen sowie die
- * gespeicherten Spielverl├ñufe.
+ * Queransicht über alle Spiele: laufende und beendete Sitzungen sowie die
+ * gespeicherten Spielverläufe.
  */
 const SessionsView: React.FC = () => {
   const navigate = useNavigate();
@@ -53,7 +53,7 @@ const SessionsView: React.FC = () => {
   }
 
   /**
-   * Eine Sitzung kann von hier aus gesteuert werden, ohne das Brett zu ├Âffnen ÔÇô
+   * Eine Sitzung kann von hier aus gesteuert werden, ohne das Brett zu öffnen –
    * praktisch, wenn das Fenster mal nicht offen ist.
    */
   async function run(action: () => Promise<unknown>): Promise<void> {
@@ -94,7 +94,7 @@ const SessionsView: React.FC = () => {
           tone="danger"
           action={
             <button type="button" className="btn btn--sm btn--ghost" onClick={() => setError(null)}>
-              Schlie├ƒen
+              Schließen
             </button>
           }
         >
@@ -108,25 +108,25 @@ const SessionsView: React.FC = () => {
             <Sparkles aria-hidden="true" size={15} />
             Verlauf
           </p>
-          <h1 className="hero__title">Sitzungen &amp; Spielverl├ñufe</h1>
+          <h1 className="hero__title">Sitzungen &amp; Spielverläufe</h1>
           <p className="hero__lead">
-            Alle Partien ├╝ber alle Spiele hinweg. Laufende Sitzungen lassen sich hier ├Âffnen oder beenden,
+            Alle Partien über alle Spiele hinweg. Laufende Sitzungen lassen sich hier öffnen oder beenden,
             beendete behalten ihren Zugverlauf.
           </p>
         </div>
 
         <dl className="hero__stats">
           <div className="stat">
-            <dt className="stat__value">{open.length || "ÔÇô"}</dt>
+            <dt className="stat__value">{open.length || "–"}</dt>
             <dd className="stat__label">offen</dd>
           </div>
           <div className="stat">
-            <dt className="stat__value">{finished.length || "ÔÇô"}</dt>
+            <dt className="stat__value">{finished.length || "–"}</dt>
             <dd className="stat__label">beendet</dd>
           </div>
           <div className="stat">
-            <dt className="stat__value">{allGames.length || "ÔÇô"}</dt>
-            <dd className="stat__label">Verl├ñufe</dd>
+            <dt className="stat__value">{allGames.length || "–"}</dt>
+            <dd className="stat__label">Verläufe</dd>
           </div>
         </dl>
       </section>
@@ -191,7 +191,7 @@ const SessionsView: React.FC = () => {
             </ul>
           ) : (
             <EmptyState icon={LayoutGrid} title="Noch keine beendete Sitzung">
-              W├ñhle im{" "}
+              Wähle im{" "}
               <button type="button" className="link" onClick={() => navigate("/")}>
                 Katalog
               </button>{" "}
@@ -207,7 +207,7 @@ const SessionsView: React.FC = () => {
             </span>
             <div>
               <h2 className="panel__title" id="panel-games">
-                Spielverl├ñufe
+                Spielverläufe
               </h2>
               <p className="panel__subtitle">jede abgeschlossene Partie</p>
             </div>
@@ -242,7 +242,7 @@ const SessionsView: React.FC = () => {
 
       <p className="panel__foot panel__foot--standalone">
         <Users aria-hidden="true" size={14} />
-        Sitzungen und Verl├ñufe liegen im Browser und sind in allen Fenstern sichtbar.
+        Sitzungen und Verläufe liegen im Browser und sind in allen Fenstern sichtbar.
       </p>
     </AppShell>
   );

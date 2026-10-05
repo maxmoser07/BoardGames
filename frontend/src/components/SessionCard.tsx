@@ -56,7 +56,7 @@ export function SessionCard({ session, game, users, onOpen, onAbort, onPause, on
   const paused = status === "paused";
   const open = session.outcome === null;
   const host = users.get(session.hostId);
-  // L├ñuft die Sitzung noch, wandert die Uhr im Viertelminutentakt mit.
+  // Läuft die Sitzung noch, wandert die Uhr im Viertelminutentakt mit.
   const now = useNow(running ? 15_000 : 60_000);
   const elapsed = playedMs(session, now);
 
@@ -69,7 +69,7 @@ export function SessionCard({ session, game, users, onOpen, onAbort, onPause, on
             {session.demo ? <span className="chip chip--demo">Beispiel</span> : null}
           </p>
           <p className="session__meta">
-            {host ? `Host: ${host.username}` : "Host: unbekannt"} ┬À {formatRelative(session.createdAt)}
+            {host ? `Host: ${host.username}` : "Host: unbekannt"} · {formatRelative(session.createdAt)}
           </p>
         </div>
         <Badge tone={STATUS_TONE[status]}>
@@ -102,7 +102,7 @@ export function SessionCard({ session, game, users, onOpen, onAbort, onPause, on
         <details className="session__details">
           <summary>
             <Flag aria-hidden="true" size={14} />
-            Spielverlauf ({game.moves.length} Z├╝ge)
+            Spielverlauf ({game.moves.length} Züge)
             <ChevronRight aria-hidden="true" className="session__chevron" size={15} />
           </summary>
           <div className="session__details-body">
@@ -126,14 +126,14 @@ export function SessionCard({ session, game, users, onOpen, onAbort, onPause, on
       <div className="session__footer">
         <p className="session__duration">
           Dauer {formatDuration(elapsed)}
-          {paused ? " ┬À pausiert" : ""}
+          {paused ? " · pausiert" : ""}
         </p>
         <div className="session__actions">
           {open ? (
             <>
               <button type="button" className="btn btn--primary btn--sm" onClick={() => onOpen(session)}>
                 <Play aria-hidden="true" size={15} />
-                Spielfeld ├Âffnen
+                Spielfeld öffnen
               </button>
               {paused ? (
                 <button type="button" className="btn btn--ghost btn--sm" onClick={() => onResume(session)}>

@@ -1,5 +1,5 @@
 /* =============================================================================
-   BoardGames ÔÇô Gestaltung
+   BoardGames – Gestaltung
    Aufbau:  1. Reset  2. Gestaltungsvariablen  3. Basis  4. Bausteine
             5. Rahmen (Dashboard / Spielfenster)  6. Seiten  7. Hilfsklassen
    Das Brett selbst liegt in ConnectFour.css.
@@ -194,7 +194,7 @@ a {
 
 /* -------------------------------------------------------------- 4. Bausteine */
 
-/* Schaltfl├ñchen ---------------------------------------------------------------- */
+/* Schaltflächen ---------------------------------------------------------------- */
 
 .btn {
   display: inline-flex;
@@ -740,7 +740,7 @@ a {
   gap: 0.9rem;
 }
 
-/* /play zeigt Brett und Historie untereinander ÔÇô daf├╝r ist mehr Breite sinnvoll. */
+/* /play zeigt Brett und Historie untereinander – dafür ist mehr Breite sinnvoll. */
 .window--wide {
   width: min(1120px, 100%);
 }
@@ -804,7 +804,7 @@ a {
   background: var(--surface);
 }
 
-/* Der Rand zeigt die Seite, nicht den aktuellen Zug ÔÇô wer dran ist, wei├ƒ man
+/* Der Rand zeigt die Seite, nicht den aktuellen Zug –  wer dran ist, weiß man
    erst am Brett. */
 .player--red {
   border-left: 3px solid var(--red);
@@ -835,14 +835,14 @@ a {
 
 /* Brett mit Pausensperre. Das Brett bleibt eingebunden, damit `useConnectFour`
    seinen Spielstand nicht verliert; die Deckschicht nimmt Zeiger- und
-   Tastatureingaben ab, w├ñhrend die Sitzung pausiert ist. */
+   Tastatureingaben ab, während die Sitzung pausiert ist. */
 .board {
   position: relative;
   display: grid;
   justify-items: center;
 }
 
-/* `inert` wirkt ├╝ber den DOM-Baum, nicht ├╝ber `display` ÔÇô der Wrapper bleibt
+/* `inert` wirkt über den DOM-Baum, nicht über `display` – der Wrapper bleibt
    deshalb schlicht und zentriert das Brett. */
 .board__panel {
   display: grid;

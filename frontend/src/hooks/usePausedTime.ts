@@ -7,11 +7,11 @@ import { pausedMs, type GameSession } from "../types";
  *
  * `recordConnectFourGame` kennt nur den Startzeitpunkt des Fensters, nicht die
  * Pausen aus anderen Fenstern oder von vor einem Neuladen. Deshalb wird hier
- * aus dem gemeinsamen Store nachgeschlagen ÔÇô und f├╝r eine Sitzung ohne
+ * aus dem gemeinsamen Store nachgeschlagen – und für eine Sitzung ohne
  * Pausenmetadata gar nichts berechnet.
  *
  * `until` wird als Argument eingefroren, damit sich die installierte
- * fetch-Br├╝cke nicht w├ñhrend ihres Bestehens ver├ñndert.
+ * fetch-Brücke nicht während ihres Bestehens verändert.
  */
 export function usePausedTime(session: GameSession, until: number): number {
   const sessions = useLiveData(() => api.listSessions());

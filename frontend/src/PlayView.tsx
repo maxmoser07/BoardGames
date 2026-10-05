@@ -12,7 +12,7 @@ import { useNavigate } from "./router";
 import type { User } from "./types";
 
 /**
- * Partie ohne Sitzung: das Brett l├ñuft direkt im Tab, der Verlauf landet
+ * Partie ohne Sitzung: das Brett läuft direkt im Tab, der Verlauf landet
  * trotzdem in der Historie des Dashboards (`sessionId === null`).
  */
 const PlayView: React.FC = () => {
@@ -46,14 +46,14 @@ const PlayView: React.FC = () => {
         </div>
         <button type="button" className="btn btn--ghost btn--sm" onClick={() => navigate("/")}>
           <ArrowLeft aria-hidden="true" size={15} />
-          Zur ├£bersicht
+          Zur Übersicht
         </button>
       </header>
 
       <main className="window__main">
         <Notice tone="info">
-          Diese Partie geh├Ârt zu keiner Sitzung. Der Verlauf wird trotzdem gespeichert und erscheint unter
-          ÔÇ×Spielverl├ñufeÔÇ£.
+          Diese Partie gehört zu keiner Sitzung. Der Verlauf wird trotzdem gespeichert und erscheint unter
+          „Spielverläufe“.
         </Notice>
 
         <ConnectFour />
@@ -67,7 +67,7 @@ const PlayView: React.FC = () => {
               <h2 className="panel__title" id="play-history">
                 Lokale Partien
               </h2>
-              <p className="panel__subtitle">{localGames.length} gespeicherte Verl├ñufe</p>
+              <p className="panel__subtitle">{localGames.length} gespeicherte Verläufe</p>
             </div>
           </header>
 
