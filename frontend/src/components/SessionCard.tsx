@@ -1,10 +1,11 @@
-import { Ban, ChevronRight, Flag, Play, Trophy } from "lucide-react";
+import { Ban, ChevronRight, Flag, Pause, Play, Trophy } from "lucide-react";
 
 import { formatDuration, formatRelative } from "../lib/format";
 import { useNow } from "../hooks/useNow";
 import {
   SIDE_LABEL,
   outcomeLabel,
+  playedMs,
   sessionStatus,
   statusLabel,
   type GameSession,
@@ -21,10 +22,13 @@ interface SessionCardProps {
   users: Map<number, User>;
   onOpen: (session: GameSession) => void;
   onAbort: (session: GameSession) => void;
+  onPause: (session: GameSession) => void;
+  onResume: (session: GameSession) => void;
 }
 
 const STATUS_TONE: Record<ReturnType<typeof sessionStatus>, string> = {
   running: "live",
+  paused: "paused",
   finished: "done",
   aborted: "stopped",
 };
@@ -46,13 +50,15 @@ function Seat({ side, userId, users }: { side: Side; userId: number; users: Map<
   );
 }
 
-export function SessionCard({ session, game, users, onOpen, onAbort }: SessionCardProps) {
+export function SessionCard({ session, game, users, onOpen, onAbort, onPause, onResume }: SessionCardProps) {
   const status = sessionStatus(session);
   const running = status === "running";
+  const paused = status === "paused";
+  const open = session.outcome === null;
   const host = users.get(session.hostId);
-  // Läuft die Sitzung noch, wandert die Uhr im Viertelminutentakt mit.
+  // L├ñuft die Sitzung noch, wandert die Uhr im Viertelminutentakt mit.
   const now = useNow(running ? 15_000 : 60_000);
-  const elapsed = (session.finishedAt ? Date.parse(session.finishedAt) : now) - Date.parse(session.createdAt);
+  const elapsed = playedMs(session, now);
 
   return (
     <li className="card session">
@@ -63,11 +69,12 @@ export function SessionCard({ session, game, users, onOpen, onAbort }: SessionCa
             {session.demo ? <span className="chip chip--demo">Beispiel</span> : null}
           </p>
           <p className="session__meta">
-            {host ? `Host: ${host.username}` : "Host: unbekannt"} · {formatRelative(session.createdAt)}
+            {host ? `Host: ${host.username}` : "Host: unbekannt"} ┬À {formatRelative(session.createdAt)}
           </p>
         </div>
         <Badge tone={STATUS_TONE[status]}>
           {running ? <span className="pulse" aria-hidden="true" /> : null}
+          {paused ? <Pause aria-hidden="true" size={12} /> : null}
           {statusLabel(status)}
         </Badge>
       </div>
@@ -95,7 +102,7 @@ export function SessionCard({ session, game, users, onOpen, onAbort }: SessionCa
         <details className="session__details">
           <summary>
             <Flag aria-hidden="true" size={14} />
-            Spielverlauf ({game.moves.length} Züge)
+            Spielverlauf ({game.moves.length} Z├╝ge)
             <ChevronRight aria-hidden="true" className="session__chevron" size={15} />
           </summary>
           <div className="session__details-body">
@@ -117,14 +124,28 @@ export function SessionCard({ session, game, users, onOpen, onAbort }: SessionCa
       ) : null}
 
       <div className="session__footer">
-        <p className="session__duration">Dauer {formatDuration(elapsed)}</p>
+        <p className="session__duration">
+          Dauer {formatDuration(elapsed)}
+          {paused ? " ┬À pausiert" : ""}
+        </p>
         <div className="session__actions">
-          {running ? (
+          {open ? (
             <>
               <button type="button" className="btn btn--primary btn--sm" onClick={() => onOpen(session)}>
                 <Play aria-hidden="true" size={15} />
-                Spielfeld öffnen
+                Spielfeld ├Âffnen
               </button>
+              {paused ? (
+                <button type="button" className="btn btn--ghost btn--sm" onClick={() => onResume(session)}>
+                  <Play aria-hidden="true" size={15} />
+                  Fortsetzen
+                </button>
+              ) : (
+                <button type="button" className="btn btn--ghost btn--sm" onClick={() => onPause(session)}>
+                  <Pause aria-hidden="true" size={15} />
+                  Pausieren
+                </button>
+              )}
               <button type="button" className="btn btn--danger-ghost btn--sm" onClick={() => onAbort(session)}>
                 <Ban aria-hidden="true" size={15} />
                 Beenden

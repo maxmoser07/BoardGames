@@ -19,8 +19,10 @@ die Daten liegen im Browser (siehe [Datenhaltung](#datenhaltung)).
 
 ```
 src/
-  App.tsx                  Wurzel: verteilt die drei Ansichten (router.ts)
-  Dashboard.tsx            Übersicht: Sitzung anlegen, Sitzungen, Historie
+  App.tsx                  Wurzel: verteilt die Ansichten (router.ts)
+  Catalog.tsx              Spielekatalog unter /
+  GameSetup.tsx            Einstellungen unter /games/:name
+  SessionsView.tsx         Sitzungen und Verläufe unter /sessions
   GameSessionWindow.tsx    Spielfeld-Fenster unter /connectfour/:id
   PlayView.tsx             Partie ohne Sitzung unter /play
   router.ts                Pfadauflösung ohne Router-Bibliothek
@@ -29,10 +31,15 @@ src/
   useConnectFour.ts        eingefroren – siehe unten
   ConnectFour.css          Gestaltung des Bretts
   index.css                Gestaltung der Oberfläche (Variablen + Komponenten)
-  components/              Bausteine: Karten, Auswahl, Anzeigen, Rahmen
-  hooks/                   useLiveData, useNow, usePersistentState
-  lib/                     Datenhaltung, Validierung, Formatierung, fetch-Brücke
+  components/              Bausteine: Karten, Kacheln, Auswahl, Anzeigen, Rahmen
+  hooks/                   useLiveData, useNow, usePausedTime, usePersistentState
+  lib/                     Datenhaltung, Katalog, Validierung, Formatierung
+scripts/logic.test.ts      Tests für die reine Logik (npm test)
 ```
+
+Der Katalog in `lib/gameTypes.ts` listet Connect Four als spielbar und fünf
+weitere Spiele als „in Arbeit“ – die zeigen auf `/games/:name` Regeln und den
+Stand der Umsetzung, aber keine Partie.
 
 ### Farben und Seiten
 
@@ -58,13 +65,34 @@ durchgängig ersetzt.
 
 | Pfad               | Ansicht                                                   |
 | ------------------ | --------------------------------------------------------- |
-| `/`                | Dashboard                                                   |
+| `/`                | Spielekatalog – eine Kachel je Spiel                       |
+| `/games/:name`     | Einstellungen des Spiels (Sitzung anlegen)                 |
+| `/sessions`        | Sitzungen und Spielverläufe über alle Spiele               |
 | `/play`            | Brett direkt im Tab, ohne Sitzung                           |
 | `/connectfour/:id` | Spielfeld-Fenster, wird per `window.open` als Pop-up geöffnet |
 
 Für den Produktivbetrieb braucht der Server einen SPA-Fallback: unbekannte
 Pfade müssen `index.html` ausliefern. `npm run preview` macht das bereits;
 `/connectfour/:id` funktioniert im Dev-Server ohne zusätzliche Konfiguration.
+
+## Sitzungen steuern
+
+Eine Sitzung kennt vier Zustände: `running`, `paused`, `finished`, `aborted`
+(`sessionStatus` in `types.ts`). Starten und Beenden liegen im Spielfeld-Fenster,
+Pausieren und Fortsetzen zusätzlich in der Sitzungsübersicht – auch wenn das
+Spielfeld gar nicht offen ist.
+
+Die Spieluhr läuft während einer Pause nicht: `playedMs` zieht `pausedMs`
+(abgeschlossene Pausen) und eine noch offene Pause von der verstrichenen Zeit ab.
+Beim Fortsetzen wird die abgelaufene Pause in `pausedMs` festgeschrieben, damit
+die Rechnung auch nach einem Neuladen des Fensters stimmt.
+
+`ConnectFour` ist eingefroren und kennt weder Pause noch Sperre; der Brettzustand
+liegt in `useConnectFour`. Deshalb bleibt das Brett während der Pause eingebunden
+(sonst ginge der Spielstand verloren) und wird über `inert` gesperrt – das nimmt
+Zeiger- *und* Tastatureingaben zurück, womit auch der „New Game“-Knopf des Bretts
+außer Reichweite liegt. Eine halbtransparente Deckschicht macht den Zustand
+sichtbar.
 
 ## Datenhaltung
 
@@ -99,10 +127,16 @@ ersetzen – die Oberfläche ruft ausschließlich `api` auf.
 | GET     | `/api/sessions`               | `listSessions`               | `game_sessions`, `game_session_players` |
 | POST    | `/api/sessions`               | `createSession`              | `game_sessions`, `game_session_players` |
 | GET     | `/api/sessions/{id}`          | `getSession`                 | dito |
+| POST    | `/api/sessions/{id}/pause`    | `pauseSession`               | `game_sessions` |
+| POST    | `/api/sessions/{id}/resume`   | `resumeSession`              | dito |
 | POST    | `/api/sessions/{id}/abort`    | `abortSession`               | `game_sessions` |
 | POST    | `/api/sessions/{id}/surrender`| `surrenderSession`           | dito |
 | POST    | `/api/connect-four/games`     | `recordConnectFourGame`      | `game_sessions`, `moves` |
 | GET     | `/api/connect-four/games`     | `listGames`                  | dito |
+
+Eine Pause setzt weder `outcome` noch `finished_at`. Beide dürfen laut
+`chk_session_outcome` in `game_sessions` nur zusammen gesetzt werden; der
+Pausenzustand gehört deshalb nach `metadata_json` (`paused_at`, `paused_ms`).
 
 Beim Umstieg sind zwei Punkte zu beachten:
 
@@ -142,14 +176,19 @@ entsprechen den serverseitigen Prüfungen in `backend/src/api.rs` und sind in
   Rechteprüfung (`v_user_permissions`) wird erst mit dem Backend scharf.
 * **Nur eine gehostete Partie zur Zeit.** Ohne Server gibt es keine
   Sitzungs-IDs, die werkzeugübergreifend eindeutig sind – zwei gleichzeitige
-  Fenster könnten ihr Ergebnis nicht eindeutig zuordnen. Das Dashboard weist
-  deshalb darauf hin, wenn schon eine Partie läuft. Die Direktansicht
-  (`/play`) ist davon nicht betroffen.
+  Fenster könnten ihr Ergebnis nicht eindeutig zuordnen. Die Oberfläche weist
+  deshalb darauf hin, wenn schon eine Partie offen ist – eine pausierte Sitzung
+  zählt dabei als offen. Die Direktansicht (`/play`) ist nicht betroffen.
+* **Nur Connect Four ist spielbar.** Das liegt an `useConnectFour.ts`: der Hook
+  enthält die Spiellogik fest, andere Spiele brauchen eigene Hooks. Das Backend
+  kennt die Routen für `/connectfour` und `/tictactoe`, das Frontend nutzt
+  bislang nur die erste.
 * **Ein Brett pro Browser.** Ohne Server gibt es keine Sitzungs-IDs, die
   werkzeugübergreifend eindeutig sind – die Daten sind an Browser und
   Rechner gebunden.
 * **Pop-up-Blocker.** Blockiert der Browser `window.open`, gibt das Dashboard
   einen Link statt des Fensters aus.
-* **`boardgames/boardgames/`** war ein veraltetes Duplikat dieses Projekts. Es
-  wurde gelöscht, dieser Ordner ist aus `website/boardgames/` hervorgegangen;
-  das Original liegt in der Git-Historie.
+* **Pfadwechsel.** Das Projekt lag zuerst unter `boardgames/boardgames/`, dann
+  unter `website/boardgames/` und steht jetzt in `frontend/`. Skripte liegen
+  zusätzlich im Repository-Root und starten alles per `npm run dev`. Verweise
+  auf die alten Pfade gibt es nicht mehr.

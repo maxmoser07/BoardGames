@@ -1,10 +1,10 @@
 /**
- * Gemeinsame Domänen-Typen.
+ * Gemeinsame Dom├ñnen-Typen.
  *
  * Die Farbnamen stammen aus `useConnectFour.ts`, das eingefroren ist und nur
  * `"red" | "yellow"` kennt. Damit App, Spielfenster und Datenhaltung dieselben
  * Begriffe verwenden, sind Sitzung, Ergebnis und Spielfeld-Seite konsequent
- * über `Side` modelliert:
+ * ├╝ber `Side` modelliert:
  *
  *   seat 0 -> "red"    (Sitzung: playerRed)
  *   seat 1 -> "yellow" (Sitzung: playerYellow)
@@ -25,7 +25,7 @@ export const SIDE_LABEL: Record<Side, string> = {
   yellow: "Gelb",
 };
 
-/** Das andere Feld: wird für Sieg/Antrag/Ansicht benötigt. */
+/** Das andere Feld: wird f├╝r Sieg/Antrag/Ansicht ben├Âtigt. */
 export function opponent(side: Side): Side {
   return side === "red" ? "yellow" : "red";
 }
@@ -37,36 +37,42 @@ export interface User {
 }
 
 /**
- * Akzentfarbe eines Spiels. Als Schlüssel statt Farbwert, damit die Kacheln
+ * Akzentfarbe eines Spiels. Als Schl├╝ssel statt Farbwert, damit die Kacheln
  * Hell- und Dunkelmodus aus dem Stylesheet bekommen (siehe index.css).
  */
 export type AccentKey = "red" | "amber" | "violet" | "teal" | "blue" | "rose";
 
 export interface GameType {
   id: number;
-  /** Schlüssel wie in `game_types.name` der Datenbank. */
+  /** Schl├╝ssel wie in `game_types.name` der Datenbank. */
   name: string;
   displayName: string;
   /** Untertitel in der Katalog-Kachel. */
   tagline: string;
-  /** Ein Satz für die Detailseite. */
+  /** Ein Satz f├╝r die Detailseite. */
   description: string;
   maxPlayers: number;
   /** false = in der Datenbank angelegt, im Frontend aber noch nicht spielbar. */
   implemented: boolean;
-  /** Brettmaße, `null` für Spiele ohne festes Raster. */
+  /** Brettma├ƒe, `null` f├╝r Spiele ohne festes Raster. */
   board: { rows: number; cols: number } | null;
   accent: AccentKey;
-  /** Stichworte der Regeln für die Detailseite. */
+  /** Stichworte der Regeln f├╝r die Detailseite. */
   rules: string[];
   /** Reihenfolge im Katalog. */
   sortOrder: number;
 }
 
-/** `running` = offen, `finished`/`aborted` = beendet (Spielstand liegt in der DB). */
-export type SessionStatus = "running" | "finished" | "aborted";
+/**
+ * `running` = offen, `paused` = angehalten, `finished`/`aborted` = beendet.
+ *
+ * Eine Pause setzt weder `outcome` noch `finishedAt` ÔÇô die CHECK-Constraints in
+ * `game_sessions` erlauben beides nur zusammen. Der Pausenzustand geh├Ârt
+ * deshalb in `metadata_json` (siehe `pausedAt`), nicht in eine eigene Spalte.
+ */
+export type SessionStatus = "running" | "paused" | "finished" | "aborted";
 
-/** Entspricht `game_sessions.outcome`, nur mit Farbnamen statt Sitzplätzen. */
+/** Entspricht `game_sessions.outcome`, nur mit Farbnamen statt Sitzpl├ñtzen. */
 export type GameOutcome = "red_win" | "yellow_win" | "draw" | "aborted";
 
 export type AbortReason = "host" | "surrender";
@@ -75,16 +81,27 @@ export interface GameSession {
   id: string;
   gameType: string;
   hostId: number;
-  /** Rot beginnt. Beide Plätze sind in der Praxis immer besetzt. */
+  /** Rot beginnt. Beide Pl├ñtze sind in der Praxis immer besetzt. */
   players: Record<Side, number>;
   createdAt: string;
   finishedAt: string | null;
   outcome: GameOutcome | null;
   abortReason: AbortReason | null;
-  /** Wer aufgegeben hat – nur bei `abortReason === "surrender"`. */
+  /** Wer aufgegeben hat ÔÇô nur bei `abortReason === "surrender"`. */
   surrenderedBy: number | null;
   /** Verweis auf den gespeicherten Spielverlauf, sobald die Partie endet. */
   gameId: string | null;
+  /**
+   * Zeitpunkt der aktuellen Pause, `null` wenn die Sitzung l├ñuft oder
+   * beendet ist. Entspricht `metadata_json.paused_at` in der Datenbank.
+   */
+  pausedAt: string | null;
+  /**
+   * Bis hierher abgeschlossene Pausenzeit in Millisekunden. Wird bei
+   * `resumeSession` addiert, damit die Spielzeit ohne Pausen berechenbar
+   * bleibt, auch wenn das Fenster neu geladen wurde.
+   */
+  pausedMs: number;
   /** true = Beispieldatensatz aus `lib/api.ts`, kein Spiel aus diesem Browser. */
   demo?: boolean;
 }
@@ -128,7 +145,36 @@ export interface RecordedGame {
 /* ------------------------------------------------------------------ Ableitungen */
 
 export function sessionStatus(session: GameSession): SessionStatus {
-  return session.outcome === null ? "running" : "aborted" === session.outcome ? "aborted" : "finished";
+  if (session.outcome !== null) return session.outcome === "aborted" ? "aborted" : "finished";
+  return session.pausedAt === null ? "running" : "paused";
+}
+
+/** `null`, solange die Sitzung nicht angehalten ist. */
+export function isRunning(session: GameSession): boolean {
+  return session.outcome === null && session.pausedAt === null;
+}
+
+/** `true`, solange das Brett bedient werden darf. */
+export function isPlayable(session: GameSession): boolean {
+  return isRunning(session);
+}
+
+/**
+ * Bisherige Spielzeit ohne Pausen. `now` kommt von au├ƒen, damit die Berechnung
+ * in React nicht auf `Date.now()` w├ñhrend des Renderns angewiesen ist.
+ */
+export function playedMs(session: GameSession, now: number): number {
+  const end = session.finishedAt ? Date.parse(session.finishedAt) : now;
+  const total = end - Date.parse(session.createdAt);
+  // Eine noch laufende Pause z├ñhlt nicht zur Spielzeit.
+  const openPause = session.pausedAt === null ? 0 : now - Date.parse(session.pausedAt);
+  return Math.max(0, total - session.pausedMs - openPause);
+}
+
+/** Pausenzeit insgesamt: abgeschlossene Pausen plus eine noch offene. */
+export function pausedMs(session: GameSession, now: number): number {
+  const openPause = session.pausedAt === null ? 0 : now - Date.parse(session.pausedAt);
+  return session.pausedMs + Math.max(0, openPause);
 }
 
 export function outcomeLabel(outcome: GameOutcome): string {
@@ -148,6 +194,8 @@ export function statusLabel(status: SessionStatus): string {
   switch (status) {
     case "running":
       return "Laufend";
+    case "paused":
+      return "Pausiert";
     case "finished":
       return "Beendet";
     case "aborted":

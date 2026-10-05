@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Tests für die reine Logik – ohne Browser, ohne Test-Framework.
  * Ausführen: `npm test`  (Node 24 kann TypeScript direkt ausführen)
  */
@@ -9,7 +9,18 @@ import { describe, it } from "node:test";
 import { COLS, ROWS, buildGrid, summariseMoves, validateConnectFourResult } from "../src/lib/connectFour.ts";
 import { GAME_TYPES, bySortOrder, findGameType } from "../src/lib/gameTypes.ts";
 import { parseRoute, setupPath, windowPath } from "../src/router.ts";
-import { opponent, sessionStatus, winnerToOutcome, type ConnectFourMove } from "../src/types.ts";
+import {
+  isPlayable,
+  isRunning,
+  opponent,
+  pausedMs,
+  playedMs,
+  sessionStatus,
+  statusLabel,
+  winnerToOutcome,
+  type ConnectFourMove,
+  type GameSession,
+} from "../src/types.ts";
 
 /** Rot gewinnt waagerecht in der untersten Reihe. */
 const redWins: ConnectFourMove[] = [
@@ -112,22 +123,112 @@ describe("Spielekatalog", () => {
   });
 });
 
+describe("Sitzungsstatus", () => {
+  const base = {
+    id: "s-test",
+    gameType: "connect-four",
+    hostId: 1,
+    players: { red: 2, yellow: 3 },
+    createdAt: new Date(1_000_000).toISOString(),
+    finishedAt: null,
+    outcome: null,
+    abortReason: null,
+    surrenderedBy: null,
+    gameId: null,
+    pausedAt: null,
+    pausedMs: 0,
+  } as const;
+
+  const at = (iso: string): GameSession => ({ ...base, createdAt: new Date(iso).toISOString() });
+  const T0 = new Date("2026-01-01T10:00:00.000Z").getTime();
+
+  it("erkennt die vier Zustände", () => {
+    assert.equal(sessionStatus(base as unknown as GameSession), "running");
+    assert.equal(sessionStatus({ ...base, pausedAt: base.createdAt } as unknown as GameSession), "paused");
+    assert.equal(sessionStatus({ ...base, outcome: "red_win" } as unknown as GameSession), "finished");
+    assert.equal(sessionStatus({ ...base, outcome: "aborted" } as unknown as GameSession), "aborted");
+  });
+
+  it("behandelt eine beendete Sitzung nie als pausiert", () => {
+    // Der Ausgang hat Vorrang – sonst bliebe eine beendete Partie pausiert.
+    const session = { ...base, outcome: "red_win", pausedAt: base.createdAt } as unknown as GameSession;
+    assert.equal(sessionStatus(session), "finished");
+    assert.equal(isRunning(session), false);
+    assert.equal(isPlayable(session), false);
+  });
+
+  it("gibt das Brett nur bei laufender Sitzung frei", () => {
+    assert.equal(isPlayable(base as unknown as GameSession), true);
+    assert.equal(isPlayable({ ...base, pausedAt: base.createdAt } as unknown as GameSession), false);
+    assert.equal(isPlayable({ ...base, outcome: "draw" } as unknown as GameSession), false);
+  });
+
+  it("rechnet abgeschlossene Pausen aus der Spielzeit heraus", () => {
+    // 100 s vergangen, davon 20 s pausiert und längst beendet.
+    const session = { ...at(new Date(T0).toISOString()), pausedMs: 20_000 } as GameSession;
+    assert.equal(playedMs(session, T0 + 100_000), 80_000);
+    assert.equal(pausedMs(session, T0 + 100_000), 20_000);
+  });
+
+  it("zieht eine noch offene Pause bis jetzt ab", () => {
+    // Seit 100 s offen, die letzten 30 s sind Pause.
+    const session = {
+      ...at(new Date(T0).toISOString()),
+      pausedAt: new Date(T0 + 70_000).toISOString(),
+    } as GameSession;
+    assert.equal(playedMs(session, T0 + 100_000), 70_000);
+    assert.equal(pausedMs(session, T0 + 100_000), 30_000);
+  });
+
+  it("zählt abgeschlossene und offene Pausen zusammen", () => {
+    // 20 s vorher pausiert, jetzt seit 30 s pausiert, 100 s vergangen.
+    const session = {
+      ...at(new Date(T0).toISOString()),
+      pausedMs: 20_000,
+      pausedAt: new Date(T0 + 70_000).toISOString(),
+    } as GameSession;
+    assert.equal(pausedMs(session, T0 + 100_000), 50_000);
+    assert.equal(playedMs(session, T0 + 100_000), 50_000);
+  });
+
+  it("friert die Dauer bei einer beendeten Sitzung ein", () => {
+    // 100 s vergangen, 20 s davon vor dem Ende pausiert. Die Anzeige darf danach
+    // nicht weiterlaufen, auch wenn die Seite lange offen bleibt.
+    const session = {
+      ...at(new Date(T0).toISOString()),
+      pausedMs: 20_000,
+      outcome: "red_win" as const,
+      finishedAt: new Date(T0 + 100_000).toISOString(),
+    } as GameSession;
+    assert.equal(playedMs(session, T0 + 100_000), 80_000);
+    assert.equal(playedMs(session, T0 + 999_999), 80_000);
+    assert.equal(pausedMs(session, T0 + 999_999), 20_000);
+  });
+
+  it("liefert nie eine negative Dauer", () => {
+    // Pausenzeit kann nie größer sein als die verstrichene Zeit.
+    const session = { ...at(new Date(T0).toISOString()), pausedMs: 999_999 } as GameSession;
+    assert.equal(playedMs(session, T0), 0);
+  });
+});
+
 describe("Ableitungen", () => {
   it("vertauscht die Seiten", () => {
     assert.equal(opponent("red"), "yellow");
     assert.equal(opponent("yellow"), "red");
   });
 
-  it("bildet Ergebnisse auf Sitzungsstatus ab", () => {
-    assert.equal(sessionStatus({ outcome: null } as never), "running");
-    assert.equal(sessionStatus({ outcome: "red_win" } as never), "finished");
-    assert.equal(sessionStatus({ outcome: "aborted" } as never), "aborted");
-  });
-
   it("bildet Sieger auf Ergebnisse ab", () => {
     assert.equal(winnerToOutcome("red"), "red_win");
     assert.equal(winnerToOutcome("yellow"), "yellow_win");
     assert.equal(winnerToOutcome("draw"), "draw");
+  });
+
+  it("beschriftet alle Zustände", () => {
+    assert.equal(statusLabel("running"), "Laufend");
+    assert.equal(statusLabel("paused"), "Pausiert");
+    assert.equal(statusLabel("finished"), "Beendet");
+    assert.equal(statusLabel("aborted"), "Abgebrochen");
   });
 });
 

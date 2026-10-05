@@ -1,5 +1,5 @@
 /* =============================================================================
-   BoardGames – Gestaltung
+   BoardGames ÔÇô Gestaltung
    Aufbau:  1. Reset  2. Gestaltungsvariablen  3. Basis  4. Bausteine
             5. Rahmen (Dashboard / Spielfenster)  6. Seiten  7. Hilfsklassen
    Das Brett selbst liegt in ConnectFour.css.
@@ -194,7 +194,7 @@ a {
 
 /* -------------------------------------------------------------- 4. Bausteine */
 
-/* Schaltflächen ---------------------------------------------------------------- */
+/* Schaltfl├ñchen ---------------------------------------------------------------- */
 
 .btn {
   display: inline-flex;
@@ -344,6 +344,11 @@ a {
 .badge--stopped {
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+.badge--paused {
+  background: var(--warn-soft);
+  color: var(--warn);
 }
 
 .badge--red {
@@ -735,7 +740,7 @@ a {
   gap: 0.9rem;
 }
 
-/* /play zeigt Brett und Historie untereinander – dafür ist mehr Breite sinnvoll. */
+/* /play zeigt Brett und Historie untereinander ÔÇô daf├╝r ist mehr Breite sinnvoll. */
 .window--wide {
   width: min(1120px, 100%);
 }
@@ -777,10 +782,6 @@ a {
   width: 100%;
 }
 
-.window__main > .c4-wrapper {
-  width: auto;
-}
-
 .window__center {
   display: grid;
   place-items: center;
@@ -803,7 +804,7 @@ a {
   background: var(--surface);
 }
 
-/* Der Rand zeigt die Seite, nicht den aktuellen Zug – wer dran ist, weiß man
+/* Der Rand zeigt die Seite, nicht den aktuellen Zug ÔÇô wer dran ist, wei├ƒ man
    erst am Brett. */
 .player--red {
   border-left: 3px solid var(--red);
@@ -830,6 +831,53 @@ a {
   text-align: center;
   font-size: 0.85rem;
   color: var(--text-dim);
+}
+
+/* Brett mit Pausensperre. Das Brett bleibt eingebunden, damit `useConnectFour`
+   seinen Spielstand nicht verliert; die Deckschicht nimmt Zeiger- und
+   Tastatureingaben ab, w├ñhrend die Sitzung pausiert ist. */
+.board {
+  position: relative;
+  display: grid;
+  justify-items: center;
+}
+
+/* `inert` wirkt ├╝ber den DOM-Baum, nicht ├╝ber `display` ÔÇô der Wrapper bleibt
+   deshalb schlicht und zentriert das Brett. */
+.board__panel {
+  display: grid;
+  justify-items: center;
+}
+
+.board[data-paused="true"] {
+  cursor: not-allowed;
+}
+
+.board[data-paused="true"] .c4-wrapper {
+  filter: grayscale(0.55);
+}
+
+.board__veil {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  backdrop-filter: blur(1.5px);
+}
+
+.board__veil-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  border-radius: var(--radius-pill);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 0.85rem;
+  font-weight: 700;
 }
 
 .window__controls {
