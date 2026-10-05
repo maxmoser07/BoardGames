@@ -1,22 +1,33 @@
-pub mod User;
-pub mod Game;
-pub mod Games;
-pub mod Player;
+use anyhow::Context;
+
+// Noch nicht an die API angebunden - Warnungen fuer ungenutzten Code
+// bis dahin ausblenden.
+#[allow(dead_code)]
+mod user;
+#[allow(dead_code)]
+mod game;
+#[allow(dead_code)]
+mod games;
+#[allow(dead_code)]
+mod player;
 
 mod api;
 mod db;
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GamesNames {
     ConnectFour,
-    TTT
+    TTT,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
-    let url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "mysql://boardgames:boardgames@127.0.0.1:3306/boardgames".to_string());
+    let url = std::env::var("DATABASE_URL").context(
+        "DATABASE_URL is not set - copy backend/.env.example to backend/.env",
+    )?;
 
     let pool = sqlx::mysql::MySqlPoolOptions::new()
         .max_connections(5)

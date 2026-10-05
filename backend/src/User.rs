@@ -1,10 +1,13 @@
-pub struct User{
-    id: i8,
-    name: String,
-    role: Role,
-    password: String,
-}
-enum Role {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Role {
     Player,
-    Admin
+    Admin,
+}
+
+pub struct User {
+    pub id: u64,
+    pub name: String,
+    pub role: Role,
+    /// Nur den Hash speichern (z. B. Argon2), nie das Passwort selbst.
+    pub password_hash: String,
 }

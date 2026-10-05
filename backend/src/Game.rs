@@ -1,6 +1,7 @@
 use crate::GamesNames;
-pub struct Game{
-    id: i8,
-    name: GamesNames,
-    max_players: i8
+
+pub struct Game {
+    pub id: u32,
+    pub name: GamesNames,
+    pub max_players: u8,
 }
