@@ -178,6 +178,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 const SEAT_OF: Record<Side, number> = { red: 0, yellow: 1 };
 
+/**
+ * Kennungen sind `game_sessions.id`, also Zahlen.
+ *
+ * Vor dem Backend hat der Browser selbst Kennungen erzeugt (`s-a1b2c3`). Solche
+ * Pfade liegen noch in Lesezeichen und in Tabs, die über eine alte Version
+ * gelaufen sind - in der Datenbank können sie nicht stehen. Sie deshalb hier
+ * abzuweisen spart eine aussichtslose Anfrage und gibt eine verständliche
+ * Meldung statt einer Fehlermeldung des Servers.
+ */
+function isStoredId(id: string): boolean {
+  return /^[1-9][0-9]*$/.test(id);
+}
+
 /** Person auf einem Platz; 0 = unbekannt (Sitzungen aus `/play` haben keine). */
 function playerOf(wire: WireSession, side: Side): number {
   return wire.players.find((player) => player.seat_index === SEAT_OF[side])?.user_id ?? 0;
@@ -275,6 +288,8 @@ async function listSessions(): Promise<GameSession[]> {
 }
 
 async function getSession(id: string): Promise<GameSession | null> {
+  // Siehe `isStoredId`: eine alte Kennung ist "gibt es nicht", kein Fehler.
+  if (!isStoredId(id)) return null;
   try {
     return toSession(await request<WireSession>(`/sessions/${encodeURIComponent(id)}`));
   } catch (cause) {
@@ -312,6 +327,7 @@ async function createSession(input: CreateSessionInput): Promise<GameSession> {
 }
 
 async function sessionAction(id: string, action: string, body?: unknown): Promise<GameSession> {
+  if (!isStoredId(id)) throw new ApiError(`Sitzung ${id} gibt es nicht (mehr).`);
   const wire = await request<WireSession>(`/sessions/${encodeURIComponent(id)}/${action}`, {
     method: "POST",
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -340,7 +356,9 @@ async function recordConnectFourGame(
   validateConnectFourResult(result);
 
   const durationMs = Math.max(0, Math.round(Date.now() - context.startedAt - context.pausedMs));
-  const sessionId = context.sessionId === null ? null : Number(context.sessionId);
+  // Eine alte Kennung (siehe `isStoredId`) wird wie "ohne Sitzung" behandelt:
+  // Der Server legt dann eine eigene Zeile an, statt an einer fremden zu scheitern.
+  const sessionId = context.sessionId !== null && isStoredId(context.sessionId) ? Number(context.sessionId) : null;
 
   const created = await request<{ session_id: number }>("/connect-four/games", {
     method: "POST",

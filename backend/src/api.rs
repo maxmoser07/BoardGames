@@ -66,6 +66,7 @@ const SESSION_COLUMNS: &str = "
 
 /* ------------------------------------------------------------------- Fehler */
 
+#[derive(Debug)]
 pub enum ApiError {
     BadRequest(String),
     NotFound(String),
@@ -121,6 +122,18 @@ pub fn router() -> Router<MySqlPool> {
             get(read_connect_four_game),
         )
         .route("/api/demo-data", delete(delete_demo_data))
+}
+
+/// Kennung aus dem Pfad, `game_sessions.id` also eine Zahl.
+///
+/// Alles andere kann nicht existieren und bekommt deshalb 404 statt 400: Eine
+/// unbekannte Kennung ist kein fehlerhafter Aufbau. Praktisch wichtig, weil
+/// alte Lesezeichen aus der Zeit vor dem Backend Kennungen wie `s-a1b2c3` im
+/// Pfad tragen.
+fn session_id(path: Result<Path<String>, PathRejection>) -> Result<u64, ApiError> {
+    let Path(raw) = path.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    raw.parse()
+        .map_err(|_| ApiError::NotFound(format!("no session with id '{raw}'")))
 }
 
 pub async fn health(State(pool): State<MySqlPool>) -> Result<Json<Value>, ApiError> {
@@ -332,9 +345,9 @@ pub async fn list_sessions(State(pool): State<MySqlPool>) -> Result<Json<Value>,
 
 pub async fn read_session(
     State(pool): State<MySqlPool>,
-    id: Result<Path<u64>, PathRejection>,
+    id: Result<Path<String>, PathRejection>,
 ) -> Result<Json<Value>, ApiError> {
-    let Path(id) = id.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    let id = session_id(id)?;
     Ok(Json(session_json_by_id(&pool, id).await?))
 }
 
@@ -451,9 +464,9 @@ async fn insert_session(
 
 pub async fn pause_session(
     State(pool): State<MySqlPool>,
-    id: Result<Path<u64>, PathRejection>,
+    id: Result<Path<String>, PathRejection>,
 ) -> Result<Json<Value>, ApiError> {
-    let Path(id) = id.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    let id = session_id(id)?;
     let session = require_open_session(&pool, id).await?;
     if session.paused_at.is_some() {
         return bad("Diese Sitzung ist bereits pausiert.".into());
@@ -477,9 +490,9 @@ pub async fn pause_session(
 
 pub async fn resume_session(
     State(pool): State<MySqlPool>,
-    id: Result<Path<u64>, PathRejection>,
+    id: Result<Path<String>, PathRejection>,
 ) -> Result<Json<Value>, ApiError> {
-    let Path(id) = id.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    let id = session_id(id)?;
     let session = require_open_session(&pool, id).await?;
     let Some(paused_at) = session.paused_at.clone() else {
         return bad("Diese Sitzung laeuft bereits.".into());
@@ -519,9 +532,9 @@ fn elapsed_ms_since(iso: &str) -> i64 {
 
 pub async fn abort_session(
     State(pool): State<MySqlPool>,
-    id: Result<Path<u64>, PathRejection>,
+    id: Result<Path<String>, PathRejection>,
 ) -> Result<Json<Value>, ApiError> {
-    let Path(id) = id.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    let id = session_id(id)?;
     require_open_session(&pool, id).await?;
 
     sqlx::query(
@@ -543,10 +556,10 @@ pub async fn abort_session(
 
 pub async fn surrender_session(
     State(pool): State<MySqlPool>,
-    id: Result<Path<u64>, PathRejection>,
+    id: Result<Path<String>, PathRejection>,
     payload: Result<Json<SurrenderDto>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
-    let Path(id) = id.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    let id = session_id(id)?;
     let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
     require_open_session(&pool, id).await?;
 
@@ -896,9 +909,9 @@ pub async fn list_connect_four_games(State(pool): State<MySqlPool>) -> Result<Js
 
 pub async fn read_connect_four_game(
     State(pool): State<MySqlPool>,
-    session_id: Result<Path<u64>, PathRejection>,
+    path: Result<Path<String>, PathRejection>,
 ) -> Result<Json<Value>, ApiError> {
-    let Path(session_id) = session_id.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    let session_id = session_id(path)?;
 
     // Nur Connect-Four-Partien: sonst liefert die Route auch Sitzungen
     // anderer Spieltypen zurueck.
@@ -1186,5 +1199,21 @@ mod tests {
         let future = Utc::now() + chrono::Duration::seconds(30);
         let value = future.format("%Y-%m-%dT%H:%M:%SZ").to_string();
         assert_eq!(elapsed_ms_since(&value), 0);
+    }
+
+    #[test]
+    fn a_numeric_path_is_the_session_id() {
+        assert_eq!(session_id(Ok(Path("42".to_string()))).unwrap(), 42);
+    }
+
+    /// Alte Kennungen aus der Browser-Datenhaltung (`createId("s")`) koennen
+    /// nicht in `game_sessions` stehen. Sie sind "unbekannt", nicht "kaputt".
+    #[test]
+    fn an_old_style_id_is_not_found_not_bad_request() {
+        let error = session_id(Ok(Path("s-whsax5".to_string()))).unwrap_err();
+        match error {
+            ApiError::NotFound(message) => assert!(message.contains("s-whsax5")),
+            other => panic!("erwartet NotFound, bekam {other:?}"),
+        }
     }
 }
