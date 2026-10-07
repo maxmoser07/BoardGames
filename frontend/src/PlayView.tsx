@@ -7,13 +7,14 @@ import { Logo } from "./components/Logo";
 import { EmptyState, Notice, Skeleton } from "./components/ui";
 import { useLiveData } from "./hooks/useLiveData";
 import { api } from "./lib/api";
-import { installLocalGameEndpoint } from "./lib/gameResultBridge";
+import { installGameResultEndpoint } from "./lib/gameResultEndpoint";
 import { useNavigate } from "./router";
 import type { User } from "./types";
 
 /**
  * Partie ohne Sitzung: das Brett läuft direkt im Tab, der Verlauf landet
- * trotzdem in der Historie des Dashboards (`sessionId === null`).
+ * trotzdem in der Datenbank (`sessionId === null`, weil keine Sitzung mit
+ * abgeschlossen wird).
  */
 const PlayView: React.FC = () => {
   const navigate = useNavigate();
@@ -23,7 +24,7 @@ const PlayView: React.FC = () => {
 
   useEffect(
     () =>
-      installLocalGameEndpoint({
+      installGameResultEndpoint({
         sessionId: null,
         players: { red: null, yellow: null },
         startedAt: mountedAt,
@@ -41,7 +42,7 @@ const PlayView: React.FC = () => {
           <Logo size={24} />
           <div>
             <p className="window__title">Direkt spielen</p>
-            <p className="window__subtitle">lokale Partie ohne Sitzung</p>
+            <p className="window__subtitle">Partie ohne Sitzung</p>
           </div>
         </div>
         <button type="button" className="btn btn--ghost btn--sm" onClick={() => navigate("/")}>
@@ -65,7 +66,7 @@ const PlayView: React.FC = () => {
             </span>
             <div>
               <h2 className="panel__title" id="play-history">
-                Lokale Partien
+                Partien ohne Sitzung
               </h2>
               <p className="panel__subtitle">{localGames.length} gespeicherte Verläufe</p>
             </div>
@@ -80,7 +81,7 @@ const PlayView: React.FC = () => {
               ))}
             </ul>
           ) : (
-            <EmptyState icon={History} title="Noch keine lokale Partie">
+            <EmptyState icon={History} title="Noch keine Partie ohne Sitzung">
               Beende oben eine Runde, dann erscheint der Verlauf hier.
             </EmptyState>
           )}

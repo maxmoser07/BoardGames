@@ -79,7 +79,7 @@ export function AppShell({ users, currentUserId, onCurrentUserChange, active, ch
 
       <footer className="shell__footer">
         <p>
-          Sitzungen und Verläufe liegen derzeit lokal im Browser (siehe <code>src/lib/api.ts</code>)
+          Sitzungen und Verläufe liegen in der Datenbank des Backends (siehe <code>src/lib/api.ts</code>)
         </p>
       </footer>
     </div>

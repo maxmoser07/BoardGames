@@ -151,27 +151,47 @@ npm run dev:all    # beides parallel in einem Terminal
 `npm run dev:all` startet das Backend nur, wenn Rust und MySQL laufen. Fehlt
 beides, startet ausschliesslich das Frontend.
 
-### Das Frontend laeuft auch ohne Backend
+### Das Frontend braucht das Backend
 
 Der Dev-Server leitet `/api` an `BACKEND_URL` weiter, standardmaessig an
-`http://127.0.0.1:3000`. Ohne laufendes Backend beantwortet
-`frontend/src/lib/gameResultBridge.ts` genau die eine Anfrage, die das Brett
-selbst stellt (`POST /api/connect-four/games`), lokal aus `localStorage`. Alle
-uebrigen Routen aus `lib/api.ts` sind erst mit Backend aktiv.
+`http://127.0.0.1:3000`; hinter nginx laeuft derselbe Pfad ohne Proxy.
+
+Ohne Backend zeigt die Oberflaeche in jeder Ansicht einen Fehler und legt
+nichts an. Das ist Absicht: die Daten liegen in MySQL, nicht im localStorage.
+Ein stiller Rueckfall auf den Browser wuerde Datensaetze erzeugen, die nur auf
+einem Rechner existieren und beim naechsten Start verschwunden waeren.
+
+Die einzige lokale Zustandsangabe bleibt, wer gerade als wer eingeloggt ist
+(`usePersistentState`) - da gibt es noch keinen Login.
 
 ## API
 
-Das Backend liefert derzeit drei Routen:
+Alle Routen werden von `frontend/src/lib/api.ts` benutzt, das ist der einzige
+Datenzugriff der Oberflaeche:
 
-| Methode | Route                                  | Zweck                            |
-| ------- | -------------------------------------- | -------------------------------- |
-| GET     | `/api/health`                          | DB-Verbindung pruefen            |
-| POST    | `/api/connect-four/games`              | beendete Partie speichern        |
-| GET     | `/api/connect-four/games/{session_id}` | eine Partie zuruecklesen         |
+| Methode | Route                                   | Zweck                                  |
+| ------- | --------------------------------------- | -------------------------------------- |
+| GET     | `/api/health`                           | DB-Verbindung pruefen                  |
+| GET     | `/api/users`                            | Beispielpersonen aus `users`           |
+| GET     | `/api/games`                            | Spieltypen aus `game_types`            |
+| GET     | `/api/sessions`                         | gehostete Sitzungen, neueste zuerst    |
+| POST    | `/api/sessions`                         | Sitzung anlegen, zwei Plaetze belegen  |
+| GET     | `/api/sessions/{id}`                    | eine Sitzung                           |
+| POST    | `/api/sessions/{id}/pause`              | Pause in `metadata_json` vermerken     |
+| POST    | `/api/sessions/{id}/resume`             | Pause abschliessen, Pausenzeit addieren |
+| POST    | `/api/sessions/{id}/abort`              | Sitzung abbrechen                      |
+| POST    | `/api/sessions/{id}/surrender`          | Aufgabe, Gegner gewinnt                |
+| POST    | `/api/connect-four/games`               | Partie speichern, Sitzung schliessen   |
+| GET     | `/api/connect-four/games`               | alle Verlaeufe                         |
+| GET     | `/api/connect-four/games/{session_id}`  | eine Partie                            |
+| DELETE  | `/api/demo-data`                        | Beispielpartie loeschen                |
 
-`frontend/src/lib/api.ts` ist auf zehn Routen zugeschnitten (Sitzungen,
-Benutzer, Spieltypen, Abbruch, Aufgabe). Die fehlenden Routen sind der naechste
-Schritt; die Oberflaeche ruft ausschliesslich ueber `api` darauf zu.
+Die Zustaende ohne eigene Spalte liegen in `game_sessions.metadata_json`:
+`paused_at`, `paused_ms`, `abort_reason`, `surrendered_by`, `winner_side` sowie
+die Kennzeichen `demo` und `ad_hoc`. Eine gehostete Partie ist dieselbe Zeile wie
+ihre Sitzung - `POST /api/connect-four/games` schliesst sie, statt eine zweite
+Sitzung anzulegen. Partien aus `/play` ohne Sitzung bekommen eine eigene Zeile
+mit `ad_hoc`.
 
 ## Pruefen
 
@@ -182,11 +202,20 @@ npm run build               # tsc -b && vite build -> frontend/dist/
 npm run backend:check       # cargo check
 docker compose config       # beide Compose-Dateien gegenpruefen
 docker compose build        # beide Images bauen, ohne zu starten
+cargo test                  # Brettpruefung und Metadaten-Helfer (im Backend)
 ```
 
 `npm test`, `npm run lint` und `npm run build` laufen unveraendert auch im
 Container. `npm run backend:check` braucht dort das `dev`-Target des
 Backend-Dockerfiles, sonst wird nur das Release-Binary gebaut.
+
+Fuer die Routen gibt es einen Durchlauf gegen den laufenden Stack, der jeden
+Erfolgspfad und den Fehlerpfad daneben abklappert und seine Testdaten wieder
+entfernt:
+
+```bash
+powershell -ExecutionPolicy Bypass -File scripts/api-smoke.ps1
+```
 
 ## Schema aendern
 
@@ -199,8 +228,13 @@ Rust-Abgleich siehe die Kommentare in
 
 ## Bekannte Grenzen
 
-* **Kein Login.** "Angemeldet als" waehlt eine der Beispiel-Personen; die
-  Rechtepruefung aus `v_user_permissions` wird erst mit dem Backend scharf.
+* **Kein Login.** "Angemeldet als" waehlt eine der vier Beispiel-Personen aus
+  `backend/migrations/20251007000000_seed_users.sql`; `password_hash` ist dort nur
+  ein Platzhalter, es wird sich nie angemeldet. Die Rechtepruefung aus
+  `v_user_permissions` wird erst mit dem Login scharf.
+* **Eine offene Sitzung zur Zeit.** `POST /api/sessions` lehnt ab, wenn bereits
+  eine laeuft (`outcome IS NULL`). Das entspricht der Regel der Oberflaeche,
+  gilt aber fuer alle zusammen und nicht je Person.
 * **`website/boardgames/`** war ein veraltetes Duplikat des Frontends und wurde
   nach `frontend/` verschoben. Das Original steckt in der Git-Historie. Was noch
   davon da ist, ist ein alter `dist/`-Ordner, also Ausgabe und kein eigenes

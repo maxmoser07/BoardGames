@@ -102,7 +102,10 @@ export interface GameSession {
    * bleibt, auch wenn das Fenster neu geladen wurde.
    */
   pausedMs: number;
-  /** true = Beispieldatensatz aus `lib/api.ts`, kein Spiel aus diesem Browser. */
+  /**
+   * true = Beispieldatensatz aus der Migration
+   * `backend/migrations/20251007000001_seed_demo_session.sql`, kein echtes Spiel.
+   */
   demo?: boolean;
 }
 

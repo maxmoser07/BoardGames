@@ -242,7 +242,7 @@ const SessionsView: React.FC = () => {
 
       <p className="panel__foot panel__foot--standalone">
         <Users aria-hidden="true" size={14} />
-        Sitzungen und Verläufe liegen im Browser und sind in allen Fenstern sichtbar.
+        Sitzungen und Verläufe liegen in der Datenbank und sind in allen Fenstern sichtbar.
       </p>
     </AppShell>
   );

@@ -1,11 +1,11 @@
 /**
  * Datenzugriff für die Oberfläche.
  *
- * Aktuell liegt die Datenhaltung im Browser (`localStorage`), damit Dashboard
- * und Spielfeld-Fenster denselben Spielstand sehen. Das interface `Api` ist
- * bewusst 1:1 auf die REST-Routen des Rust-Backends zugeschnitten – für den
- * Umstieg genügt es, `localApi` durch `httpApi` zu ersetzen, die Komponenten
- * rufen ausschließlich `api`:
+ * Alles liegt im Rust-Backend (axum) in MySQL – Sitzungen, Verläufe und
+ * Personen. Der Browser hält nichts davon mehr; im localStorage steht nur noch,
+ * wer gerade als wer eingeloggt ist (`usePersistentState`).
+ *
+ * Die Routen sind 1:1 die aus `backend/src/api.rs`:
  *
  *   GET    /api/health
  *   GET    /api/users
@@ -13,31 +13,36 @@
  *   GET    /api/sessions
  *   POST   /api/sessions                       { gameType, hostId, players }
  *   GET    /api/sessions/{id}
- *   POST   /api/sessions/{id}/abort
  *   POST   /api/sessions/{id}/pause
  *   POST   /api/sessions/{id}/resume
+ *   POST   /api/sessions/{id}/abort
  *   POST   /api/sessions/{id}/surrender        { userId }
- *   POST   /api/connect-four/games             { moves, winner }   <- useConnectFour
+ *   POST   /api/connect-four/games             { moves, winner, durationMs, sessionId }
  *   GET    /api/connect-four/games
+ *   DELETE /api/demo-data
  *
- * Für Details siehe README.md, Abschnitt "Backend-Anbindung".
+ * Das Backend antwortet in snake_case; die Abbildung auf die Typen aus
+ * `../types` übernehmen die `to…`-Funktionen unten. Das ist die einzige Stelle,
+ * an der die beiden Schreibweisen nebeneinander vorkommen.
+ *
+ * Ist das Backend nicht erreichbar, wirft jede Funktion einen `ApiError` mit
+ * sprechendem Text. Es gibt bewusst **keinen** Rückfall auf localStorage: sonst
+ * entstünden Daten, die nur auf einem Rechner existieren und beim nächsten
+ * Start einfach weg wären.
  */
 
 import {
-  opponent,
-  winnerToOutcome,
-  SIDE_LABEL,
   type ConnectFourResult,
+  type GameOutcome,
   type GameSession,
   type GameType,
   type RecordedGame,
   type Side,
   type User,
+  type UserRole,
 } from "../types";
 import { validateConnectFourResult } from "./connectFour";
-import { GAME_TYPES, findGameType } from "./gameTypes";
-import { createId } from "./id";
-import { read, subscribe, write } from "./storage";
+import { bySortOrder, GAME_TYPES } from "./gameTypes";
 
 export interface CreateSessionInput {
   gameType: string;
@@ -70,125 +75,166 @@ export interface Api {
   subscribe(listener: () => void): () => void;
 }
 
-/* ------------------------------------------------------------------- Daten */
-
-const KEY_USERS = "users";
-const KEY_SESSIONS = "sessions";
-const KEY_GAMES = "games";
-const KEY_SEEDED = "seeded";
-
-/* Kurz künstliche Latenz: sonst ist der Ladezustand nie zu sehen und die
-   Oberfläche wirkt wie ein kaputter Bildschirm, wenn doch einmal gewartet
-   werden muss. */
-const LATENCY_MS = 90;
-
-const wait = <T,>(value: T): Promise<T> =>
-  new Promise((resolve) => {
-    window.setTimeout(() => resolve(value), LATENCY_MS);
-  });
-
+/** Fehler einer Anfrage – mit dem HTTP-Status, falls es einen gab. */
 export class ApiError extends Error {
-  constructor(message: string) {
+  readonly status: number | undefined;
+
+  constructor(message: string, status?: number) {
     super(message);
     this.name = "ApiError";
+    this.status = status;
   }
 }
 
-const SEED_USERS: User[] = [
-  { id: 1, username: "HostUser", role: "host" },
-  { id: 2, username: "Alice", role: "player" },
-  { id: 3, username: "Bob", role: "player" },
-  { id: 4, username: "Mara", role: "admin" },
-];
+/* -------------------------------------------------------------- Wire-Format */
 
-// Der Katalog steht in `lib/gameTypes.ts`; die Datenbank liefert später nur
-// die technischen Spalten dazu.
-
-/** Beispielpartie, damit die Historie beim ersten Aufruf nicht leer ist. */
-function seedDemoData(): { sessions: GameSession[]; games: RecordedGame[] } {
-  const playedAt = new Date(Date.now() - 1000 * 60 * 47).toISOString();
-  const gameId = "g-demo2x4";
-  const sessionId = "s-demo7f2a";
-
-  const game: RecordedGame = {
-    id: gameId,
-    sessionId,
-    gameType: "connect-four",
-    winner: "red",
-    playedAt,
-    durationMs: 252_000,
-    players: { red: 2, yellow: 3 },
-    demo: true,
-    moves: [
-      { turn: 1, player: "red", location: { x: 0, y: 5 } },
-      { turn: 2, player: "yellow", location: { x: 0, y: 4 } },
-      { turn: 3, player: "red", location: { x: 1, y: 5 } },
-      { turn: 4, player: "yellow", location: { x: 1, y: 4 } },
-      { turn: 5, player: "red", location: { x: 2, y: 5 } },
-      { turn: 6, player: "yellow", location: { x: 2, y: 4 } },
-      { turn: 7, player: "red", location: { x: 3, y: 5 } },
-    ],
-  };
-
-  const session: GameSession = {
-    id: sessionId,
-    gameType: "connect-four",
-    hostId: 1,
-    players: { red: 2, yellow: 3 },
-    createdAt: new Date(new Date(playedAt).getTime() - 1000 * 30).toISOString(),
-    finishedAt: new Date(new Date(playedAt).getTime() + game.durationMs).toISOString(),
-    outcome: "red_win",
-    abortReason: null,
-    surrenderedBy: null,
-    gameId,
-    pausedAt: null,
-    pausedMs: 0,
-    demo: true,
-  };
-
-  return { sessions: [session], games: [game] };
+interface WireUser {
+  id: number;
+  username: string;
+  role: UserRole;
 }
 
-function loadUsers(): User[] {
-  const users = read<User[]>(KEY_USERS, []);
-  if (users.length > 0) return users;
-  write(KEY_USERS, SEED_USERS);
-  return SEED_USERS;
+interface WireGameType {
+  id: number;
+  name: string;
+  display_name: string;
+  max_players: number;
 }
 
-function loadGameTypes(): GameType[] {
-  const stored = read<GameType[]>("gameTypes", []);
-  return stored.length > 0 ? stored : GAME_TYPES;
+interface WirePlayer {
+  seat_index: number;
+  user_id: number | null;
+  side: string | null;
 }
 
-/**
- * Sitzungen aus früheren Versionen kennen `pausedAt` noch nicht. Fehlende
- * Felder werden hier ergänzt, statt die Nutzerdaten zu verwerfen.
- */
-function normaliseSession(session: GameSession): GameSession {
-  if (session.pausedAt !== undefined && session.pausedMs !== undefined) return session;
+interface WireSession {
+  id: number;
+  game_type: string;
+  host_id: number | null;
+  outcome: "win" | "draw" | "aborted" | null;
+  winner_side: Side | null;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+  paused_at: string | null;
+  paused_ms: number;
+  abort_reason: "host" | "surrender" | null;
+  surrendered_by: number | null;
+  demo: boolean;
+  ad_hoc: boolean;
+  players: WirePlayer[];
+}
+
+interface WireMove {
+  move_index: number;
+  payload: { col: number; row: number; side: Side };
+}
+
+interface WireGame {
+  session: WireSession;
+  moves: WireMove[];
+}
+
+/* ---------------------------------------------------------- HTTP-Grundlagen */
+
+const BASE = "/api";
+
+/** Meldet der Server `{"error": "…"}`, wird die so weitergereicht. */
+async function messageOf(response: Response): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    if (typeof body.error === "string" && body.error !== "") return body.error;
+  } catch {
+    // Keine JSON-Antwort, z. B. ein 502 vom Proxy.
+  }
+  return `Die Anfrage ist fehlgeschlagen (${response.status}).`;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers: {
+        Accept: "application/json",
+        ...(init?.body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...init?.headers,
+      },
+    });
+  } catch {
+    // Das Backend ist nicht erreichbar: Container aus, Port belegt oder CORS.
+    // Fuer die Oberflaeche reicht der Hinweis, die Ursache steht im
+    // DevTools-Tab "Network".
+    throw new ApiError(
+      "Das Backend ist nicht erreichbar. Läuft es? (`docker compose ps`, sonst `docker compose up -d`)",
+    );
+  }
+  if (!response.ok) throw new ApiError(await messageOf(response), response.status);
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+
+/* ------------------------------------------------------------ Abbildung */
+
+const SEAT_OF: Record<Side, number> = { red: 0, yellow: 1 };
+
+/** Person auf einem Platz; 0 = unbekannt (Sitzungen aus `/play` haben keine). */
+function playerOf(wire: WireSession, side: Side): number {
+  return wire.players.find((player) => player.seat_index === SEAT_OF[side])?.user_id ?? 0;
+}
+
+/** `game_sessions.outcome` kennt `win`, das Frontend braucht die Farbseite. */
+function toOutcome(wire: WireSession): GameOutcome | null {
+  if (wire.outcome === null) return null;
+  switch (wire.outcome) {
+    case "win":
+      return wire.winner_side === "yellow" ? "yellow_win" : "red_win";
+    case "draw":
+      return "draw";
+    default:
+      return "aborted";
+  }
+}
+
+function toSession(wire: WireSession): GameSession {
+  const outcome = toOutcome(wire);
   return {
-    ...session,
-    pausedAt: session.pausedAt ?? null,
-    // Ältere Datensätze hatten keine Pausen, also ist nichts nachzuzählen.
-    pausedMs: session.pausedMs ?? 0,
+    id: String(wire.id),
+    gameType: wire.game_type,
+    hostId: wire.host_id ?? 0,
+    players: { red: playerOf(wire, "red"), yellow: playerOf(wire, "yellow") },
+    createdAt: wire.started_at,
+    finishedAt: wire.finished_at,
+    outcome,
+    abortReason: wire.abort_reason,
+    surrenderedBy: wire.surrendered_by,
+    // Eine gehostete Partie ist dieselbe Zeile wie ihre Sitzung, siehe
+    // `record_connect_four_game` im Backend.
+    gameId: outcome === null ? null : String(wire.id),
+    pausedAt: wire.paused_at,
+    pausedMs: wire.paused_ms,
+    demo: wire.demo,
   };
 }
 
-function loadSessions(): GameSession[] {
-  return read<GameSession[]>(KEY_SESSIONS, []).map(normaliseSession);
-}
-
-function loadGames(): RecordedGame[] {
-  return read<RecordedGame[]>(KEY_GAMES, []);
-}
-
-function ensureSeeded(): void {
-  if (read<boolean>(KEY_SEEDED, false)) return;
-  const { sessions, games } = seedDemoData();
-  write(KEY_SESSIONS, sessions);
-  write(KEY_GAMES, games);
-  write(KEY_SEEDED, true);
+function toGame(wire: WireGame): RecordedGame {
+  const { session } = wire;
+  return {
+    id: String(session.id),
+    // Ohne Sitzung gespielt (`/play`): gehört zu keiner Sitzungszeile.
+    sessionId: session.ad_hoc ? null : String(session.id),
+    gameType: session.game_type,
+    winner: session.outcome === "draw" ? "draw" : (session.winner_side ?? "draw"),
+    moves: wire.moves.map((move) => ({
+      turn: move.move_index,
+      player: move.payload.side,
+      location: { x: move.payload.col, y: move.payload.row },
+    })),
+    playedAt: session.finished_at ?? session.started_at,
+    durationMs: session.duration_ms ?? 0,
+    players: { red: playerOf(session, "red"), yellow: playerOf(session, "yellow") },
+    demo: session.demo,
+  };
 }
 
 function byNewest<T extends { createdAt?: string; playedAt?: string }>(a: T, b: T): number {
@@ -197,194 +243,176 @@ function byNewest<T extends { createdAt?: string; playedAt?: string }>(a: T, b: 
   return right.localeCompare(left);
 }
 
-function requireSession(id: string): GameSession {
-  const session = loadSessions().find((candidate) => candidate.id === id);
-  if (!session) throw new ApiError(`Sitzung ${id} existiert nicht (mehr).`);
-  return session;
+/* ------------------------------------------------------------------ Lesen */
+
+async function getUsers(): Promise<User[]> {
+  return await request<WireUser[]>("/users");
 }
 
-/** Sitzung, die noch nicht beendet ist – Grundlage für Pause/Fortsetzen/Abbruch. */
-function requireOpen(id: string): GameSession {
-  const session = requireSession(id);
-  if (session.outcome !== null) throw new ApiError("Diese Sitzung ist bereits beendet.");
-  return session;
+/**
+ * Die technischen Spielen kommen aus der Datenbank, der Katalog (Regeln,
+ * Vorschau, Reihenfolge) aus `lib/gameTypes.ts`. Deshalb werden beide
+ * zusammengefuehrt statt eines das andere zu ersetzen: nur so erscheinen auch
+ * die fuenf "in Arbeit"-Eintraege, die es nicht in `game_types` gibt.
+ */
+async function getGameTypes(): Promise<GameType[]> {
+  const rows = await request<WireGameType[]>("/games");
+  const byName = new Map(rows.map((row) => [row.name, row]));
+  return GAME_TYPES.map((game) => {
+    const row = byName.get(game.name);
+    return row ? { ...game, id: row.id, maxPlayers: row.max_players } : game;
+  }).sort((a, b) => bySortOrder(a, b));
 }
 
-function saveSession(session: GameSession): GameSession {
-  const sessions = loadSessions();
-  const index = sessions.findIndex((candidate) => candidate.id === session.id);
-  if (index === -1) sessions.unshift(session);
-  else sessions[index] = session;
-  write(KEY_SESSIONS, sessions);
-  return session;
+async function getGameType(name: string): Promise<GameType | null> {
+  const games = await getGameTypes();
+  return games.find((game) => game.name === name) ?? null;
 }
 
-/* --------------------------------------------------------------- localApi */
+async function listSessions(): Promise<GameSession[]> {
+  const rows = await request<WireSession[]>("/sessions");
+  return rows.map(toSession).sort(byNewest);
+}
 
-export const localApi: Api = {
-  async getUsers() {
-    ensureSeeded();
-    return wait(loadUsers());
-  },
+async function getSession(id: string): Promise<GameSession | null> {
+  try {
+    return toSession(await request<WireSession>(`/sessions/${encodeURIComponent(id)}`));
+  } catch (cause) {
+    // Unbekannte Kennung ist kein Fehler, sondern "gibt es nicht".
+    if (cause instanceof ApiError && cause.status === 404) return null;
+    throw cause;
+  }
+}
 
-  async getGameTypes() {
-    return wait(loadGameTypes());
-  },
+async function listGames(): Promise<RecordedGame[]> {
+  const rows = await request<WireGame[]>("/connect-four/games");
+  return rows.map(toGame).sort(byNewest);
+}
 
-  async getGameType(name) {
-    return wait(findGameType(name) ?? null);
-  },
+/* ---------------------------------------------------------------- Schreiben */
 
-  async listSessions() {
-    ensureSeeded();
-    return wait(loadSessions().sort(byNewest));
-  },
+/** Antwortet, sobald die Sicht neu laden soll. */
+let notify: () => void = () => {};
 
-  async getSession(id) {
-    ensureSeeded();
-    return wait(loadSessions().find((session) => session.id === id) ?? null);
-  },
+async function createSession(input: CreateSessionInput): Promise<GameSession> {
+  // Schnellster Fehler zuerst, ohne Anfrage.
+  if (input.players.red === input.players.yellow) {
+    throw new ApiError("Rot und Gelb brauchen zwei verschiedene Spieler:innen.");
+  }
+  const wire = await request<WireSession>("/sessions", {
+    method: "POST",
+    body: JSON.stringify({
+      game_type: input.gameType,
+      host_id: input.hostId,
+      players: input.players,
+    }),
+  });
+  notify();
+  return toSession(wire);
+}
 
-  async createSession(input) {
-    ensureSeeded();
+async function sessionAction(id: string, action: string, body?: unknown): Promise<GameSession> {
+  const wire = await request<WireSession>(`/sessions/${encodeURIComponent(id)}/${action}`, {
+    method: "POST",
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  notify();
+  return toSession(wire);
+}
 
-    const gameType = findGameType(input.gameType);
-    if (!gameType) throw new ApiError(`Unbekanntes Spiel: ${input.gameType}`);
-    if (!gameType.implemented) {
-      throw new ApiError(`${gameType.displayName} ist noch nicht spielbar.`);
+const pauseSession = (id: string): Promise<GameSession> => sessionAction(id, "pause");
+const resumeSession = (id: string): Promise<GameSession> => sessionAction(id, "resume");
+const abortSession = (id: string): Promise<GameSession> => sessionAction(id, "abort");
+const surrenderSession = (id: string, userId: number): Promise<GameSession> =>
+  sessionAction(id, "surrender", { user_id: userId });
+
+/**
+ * Speichert eine beendete Partie in der Datenbank.
+ *
+ * `duration_ms` kann der Server nicht selbst messen, deshalb wird die im
+ * Fenster verbrachte Zeit ohne Pausen mitgeschickt. Mit `session_id` wird die
+ * gehostete Sitzung geschlossen – Sitzung und Partie sind dann ein Datensatz.
+ */
+async function recordConnectFourGame(
+  result: ConnectFourResult,
+  context: RecordGameContext,
+): Promise<RecordedGame> {
+  validateConnectFourResult(result);
+
+  const durationMs = Math.max(0, Math.round(Date.now() - context.startedAt - context.pausedMs));
+  const sessionId = context.sessionId === null ? null : Number(context.sessionId);
+
+  const created = await request<{ session_id: number }>("/connect-four/games", {
+    method: "POST",
+    body: JSON.stringify({ ...result, duration_ms: durationMs, session_id: sessionId }),
+  });
+
+  // Das Gepeicherte zurücklesen statt zusammenzubauen: so zeigt die Oberflaeche
+  // exakt das, was in der Datenbank steht.
+  const stored = await request<WireGame>(`/connect-four/games/${created.session_id}`);
+  notify();
+  return toGame(stored);
+}
+
+async function clearDemoData(): Promise<void> {
+  await request("/demo-data", { method: "DELETE" });
+  notify();
+}
+
+/* ------------------------------------------------------------ Abonnements */
+
+/**
+ * Zeitabstand fuer das Nachladen offener Ansichten, in Millisekunden.
+ *
+ * Vorher meldete der `storage`-Event jede Aenderung im selben Browser. Aus der
+ * Datenbank kommt so etwas nicht heraus, also wird gepollt: nach jeder eigenen
+ * Aenderung sofort (siehe `notify`), sonst im Takt darueber. Das haelt Spielfeld-
+ * Fenster und Dashboard im Schritt, auch ueber Browserfenster hinweg.
+ */
+const POLL_MS = 3000;
+
+const listeners = new Set<() => void>();
+let timer: number | null = null;
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  if (timer === null) {
+    timer = window.setInterval(() => {
+      // Im Hintergrundtab gibt es nichts zu zeigen – dann nicht laden.
+      if (document.visibilityState === "visible") notify();
+    }, POLL_MS);
+  }
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0 && timer !== null) {
+      window.clearInterval(timer);
+      timer = null;
     }
-    if (input.players.red === input.players.yellow) {
-      throw new ApiError("Rot und Gelb brauchen zwei verschiedene Spieler:innen.");
-    }
-    const known = new Set(loadUsers().map((user) => user.id));
-    for (const side of ["red", "yellow"] as const) {
-      if (!known.has(input.players[side])) {
-        throw new ApiError(`Unbekannter Spieler für die Seite ${SIDE_LABEL[side]}.`);
-      }
-    }
-    // Eine angehaltene Partie blockiert ebenfalls – sie ist noch offen.
-    if (loadSessions().some((session) => session.outcome === null)) {
-      throw new ApiError("Es läuft bereits eine Partie. Bitte zuerst die offene Sitzung beenden.");
-    }
+  };
+}
 
-    const session: GameSession = {
-      id: createId("s"),
-      gameType: input.gameType,
-      hostId: input.hostId,
-      players: { ...input.players },
-      createdAt: new Date().toISOString(),
-      finishedAt: null,
-      outcome: null,
-      abortReason: null,
-      surrenderedBy: null,
-      gameId: null,
-      pausedAt: null,
-      pausedMs: 0,
-    };
-    return wait(saveSession(session));
-  },
+notify = () => {
+  for (const listener of [...listeners]) listener();
+};
 
-  async pauseSession(id) {
-    const session = requireOpen(id);
-    if (session.pausedAt !== null) throw new ApiError("Diese Sitzung ist bereits pausiert.");
-    return wait(saveSession({ ...session, pausedAt: new Date().toISOString() }));
-  },
+/* ------------------------------------------------------------------ Export */
 
-  async resumeSession(id) {
-    const session = requireOpen(id);
-    if (session.pausedAt === null) throw new ApiError("Diese Sitzung läuft bereits.");
-    // Die abgeschlossene Pause wird festgehalten, damit die Spielzeit auch nach
-    // einem Neuladen des Fensters stimmt.
-    const spent = Math.max(0, Date.now() - Date.parse(session.pausedAt));
-    return wait(saveSession({ ...session, pausedAt: null, pausedMs: session.pausedMs + spent }));
-  },
-
-  async abortSession(id) {
-    const session = requireOpen(id);
-    return wait(
-      saveSession({
-        ...session,
-        outcome: "aborted",
-        abortReason: "host",
-        finishedAt: new Date().toISOString(),
-        // Eine offene Pause zählt nicht mehr zur Laufzeit.
-        pausedAt: null,
-      }),
-    );
-  },
-
-  async surrenderSession(id, userId) {
-    const session = requireOpen(id);
-    if (session.players.red !== userId && session.players.yellow !== userId) {
-      throw new ApiError("Diese Person sitzt in dieser Sitzung nicht am Brett.");
-    }
-
-    const loser: Side = session.players.red === userId ? "red" : "yellow";
-
-    return wait(
-      saveSession({
-        ...session,
-        outcome: winnerToOutcome(opponent(loser)),
-        abortReason: "surrender",
-        surrenderedBy: userId,
-        finishedAt: new Date().toISOString(),
-        pausedAt: null,
-      }),
-    );
-  },
-
-  async recordConnectFourGame(result, context) {
-    ensureSeeded();
-    validateConnectFourResult(result);
-
-    const endedAt = Date.now();
-
-    const game: RecordedGame = {
-      id: createId("g"),
-      sessionId: context.sessionId,
-      gameType: "connect-four",
-      winner: result.winner,
-      moves: result.moves,
-      playedAt: new Date(endedAt).toISOString(),
-      // Nur die tatsächlich gespielte Zeit – Pausen zählen nicht mit.
-      durationMs: Math.max(0, endedAt - context.startedAt - context.pausedMs),
-      players: { ...context.players },
-    };
-    write(KEY_GAMES, [game, ...loadGames()]);
-
-    // Die gehostete Sitzung endet mit derselben Partie. Ist sie schon
-    // beendet (Host hat vorher gestoppt), bleibt ihr Ausgang unangetastet –
-    // der Spielverlauf wird trotzdem gespeichert.
-    if (context.sessionId) {
-      const session = loadSessions().find((candidate) => candidate.id === context.sessionId);
-      if (session && session.outcome === null) {
-        saveSession({
-          ...session,
-          outcome: winnerToOutcome(result.winner),
-          finishedAt: game.playedAt,
-          gameId: game.id,
-          pausedAt: null,
-        });
-      }
-    }
-
-    return wait(game);
-  },
-
-  async listGames() {
-    ensureSeeded();
-    return wait(loadGames().sort(byNewest));
-  },
-
-  async clearDemoData() {
-    const sessions = loadSessions().filter((session) => !session.demo);
-    const games = loadGames().filter((game) => !game.demo);
-    write(KEY_SESSIONS, sessions);
-    write(KEY_GAMES, games);
-    return wait(undefined);
-  },
-
+export const httpApi: Api = {
+  getUsers,
+  getGameTypes,
+  getGameType,
+  listSessions,
+  getSession,
+  createSession,
+  pauseSession,
+  resumeSession,
+  abortSession,
+  surrenderSession,
+  recordConnectFourGame,
+  listGames,
+  clearDemoData,
   subscribe,
 };
 
-export const api: Api = localApi;
+/** Einziger Zugriff der Oberflaeche: alles laeuft ueber das Backend. */
+export const api: Api = httpApi;

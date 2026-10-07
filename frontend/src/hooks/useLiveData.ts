@@ -16,10 +16,22 @@ function messageOf(cause: unknown): string {
 }
 
 /**
+ * Gleicher Inhalt, neue Objekte? Das Polling laedt im Takt dieselben Listen neu.
+ * Ohne diesen Vergleich bekaeme jede Liste alle drei Sekunden neue Objekte und
+ * die ganze Ansicht wuerde neu rendern, obwohl sich nichts geaendert hat. Die
+ * Nutzdaten sind kleine Listen, deshalb genuegt der Vergleich ueber den
+ * JSON-Text.
+ */
+function sameContent(previous: unknown, next: unknown): boolean {
+  if (previous === next) return true;
+  return JSON.stringify(previous) === JSON.stringify(next);
+}
+
+/**
  * Lädt Daten über `api` und hält sie automatisch aktuell.
  *
- * Alle Ansichten lesen aus derselben lokalen Datenhaltung, die jede Änderung
- * meldet – ein Abonnement genügt also, kein Polling und kein `setInterval`.
+ * Das Abonnement von `api` meldet jede Änderung und fragt zusätzlich im Takt
+ * nach – vorbei an den `storage`-Events, aus denen die Datenhaltung früher kam.
  * `setState` passiert ausschließlich im Promise-Callback: der Effekt selbst
  * bleibt synchron und löst keine Render-Kaskade aus.
  */
@@ -29,7 +41,7 @@ export function useLiveData<T>(loader: () => Promise<T>): LiveData<T> {
   const [loading, setLoading] = useState(true);
 
   const apply = useCallback((value: T) => {
-    setData(value);
+    setData((previous) => (sameContent(previous, value) ? previous : value));
     setError(null);
     setLoading(false);
   }, []);

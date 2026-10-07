@@ -10,7 +10,7 @@ import { useNow } from "./hooks/useNow";
 import { usePausedTime } from "./hooks/usePausedTime";
 import { ApiError, api } from "./lib/api";
 import { formatDateTime, formatDuration } from "./lib/format";
-import { installLocalGameEndpoint } from "./lib/gameResultBridge";
+import { installGameResultEndpoint } from "./lib/gameResultEndpoint";
 import { useNavigate } from "./router";
 import {
   SIDE_LABEL,
@@ -94,8 +94,8 @@ export const GameSessionWindow: React.FC<Props> = ({ sessionId }) => {
               </button>
             }
           >
-            Sitzungen liegen im Browser dieses Geräts. Diese Kennung stammt aus einem anderen Browser oder der
-            Verlauf wurde zurückgesetzt.
+            Sitzung <code>{sessionId}</code> gibt es nicht (mehr). Vielleicht wurde sie
+            entfernt, oder die Adresse stammt aus einem anderen System.
           </Notice>
         ) : (
           <SessionBody session={loaded} users={userMap} />
@@ -127,16 +127,16 @@ function SessionBody({ session, users }: SessionBodyProps) {
   const game: RecordedGame | undefined = (games.data ?? []).find((candidate) => candidate.id === session.gameId);
   const now = useNow(running ? 1000 : 60_000);
 
-  // Pausen, die vor diesem Fenster liefen, kennt nur der gemeinsame Store. Die
-  // Brücke braucht sie, um beim Speichern die echte Spielzeit zu berechnen.
+  // Pausen, die vor diesem Fenster liefen, kennt nur die Datenbank. Die Brücke
+  // braucht sie, um beim Speichern die echte Spielzeit zu berechnen.
   const pausedTotal = usePausedTime(session, now);
 
   // `useConnectFour` meldet das fertige Spiel per POST an
-  // /api/connect-four/games. Ohne laufendes Backend beantwortet diese Brücke
-  // den Request lokal, damit das Ergebnis in Historie und Dashboard landet.
+  // /api/connect-four/games. Die Brücke ergänzt Sitzungs-Id und Spielzeit, der
+  // Auftrag landet in der Datenbank.
   useEffect(
     () =>
-      installLocalGameEndpoint({
+      installGameResultEndpoint({
         sessionId: session.id,
         players: { ...session.players },
         startedAt: Date.parse(session.createdAt),

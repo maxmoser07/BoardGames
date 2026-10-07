@@ -12,8 +12,8 @@ npm run lint       # eslint (inkl. React-Compiler-Regeln)
 npm test           # Router, Ableitungen und Ergebnis-Pruefung (Node, ohne Browser)
 ```
 
-Voraussetzung ist nur Node 20+. Ein laufendes Backend wird **nicht** benötigt –
-die Daten liegen im Browser (siehe [Datenhaltung](#datenhaltung)).
+Voraussetzung ist ein laufendes Backend: Sitzungen, Verläufe und Personen liegen
+in MySQL, nicht im Browser (siehe [Datenhaltung](#datenhaltung)).
 
 ## Auslieferung im Container
 
@@ -52,7 +52,9 @@ src/
   index.css                Gestaltung der Oberfläche (Variablen + Komponenten)
   components/              Bausteine: Karten, Kacheln, Auswahl, Anzeigen, Rahmen
   hooks/                   useLiveData, useNow, usePausedTime, usePersistentState
-  lib/                     Datenhaltung, Katalog, Validierung, Formatierung
+  lib/                     HTTP-Zugriff, Katalog, Validierung, Formatierung
+    api.ts                 interface Api und httpApi – der einzige Datenzugriff
+    gameResultEndpoint.ts  ergänzt Sitzungs-Id und Spielzeit beim POST des Hooks
 scripts/logic.test.ts      Tests für die reine Logik (npm test)
 ```
 
@@ -76,9 +78,11 @@ durchgängig ersetzt.
 * **Beide Personen spielen in einem Fenster** abwechselnd – getrennte Fenster je
   Seite wären nur mit einem Eingriff in den Hook möglich.
 * **Der Hook meldet das Ergebnis per `fetch`** an `POST /api/connect-four/games`
-  und erwartet eine 2xx-Antwort. Damit das ohne Backend funktioniert, beantwortet
-  `lib/gameResultBridge.ts` genau diesen Request lokal (siehe unten). Die Datei
-  kann ersatzlos entfallen, sobald das Backend läuft.
+  und erwartet eine 2xx-Antwort. Zwei Angaben fehlen in seinem Body – die
+  Sitzungs-Id und die Spielzeit ohne Pausen –, die ergänzt
+  `lib/gameResultEndpoint.ts`, bevor der Request das Fenster verlässt (siehe
+  [Datenhaltung](#datenhaltung)). Ohne diese Ergänzung entstünde zusätzlich zur
+  Partie eine offene Sitzung.
 
 ## Routen
 
@@ -115,62 +119,68 @@ sichtbar.
 
 ## Datenhaltung
 
-`lib/api.ts` definiert das interface `Api` und liefert die aktuelle
-Implementierung `localApi` auf Basis von `localStorage` (`lib/storage.ts`).
-Damit sehen das Pop-up mit dem Brett und das Dashboard denselben Stand, ohne
-dass ein Server laufen muss.
+`lib/api.ts` definiert das interface `Api` und liefert die Implementierung
+`httpApi`: jeder Aufruf geht an das Rust-Backend und landet in MySQL. Sitzungen,
+Spielverläufe und Personen liegen also auf dem Server, nicht im Browser – das
+Pop-up mit dem Brett und das Dashboard lesen denselben Stand aus derselben Quelle.
 
-Aktualisierung ohne Polling: `localStorage` ist origin- und damit
-fensterübergreifend, benachrichtigt aber nur *andere* Fenster. `lib/storage.ts`
-hängt daher an jedes Fenster ein `storage`-Event und ruft die Abonnenten
-zusätzlich lokal auf; jeder Schreibvorgang bekommt eine eigene Revision, damit
-sich der gespeicherte String garantiert ändert. `useLiveData` abonniert das und
-lädt neu – synchron wirkende Änderungen im anderen Fenster erscheinen dadurch
-sofort im Dashboard.
+Ohne Backend bekommt jede Ansicht einen Fehlertext und legt nichts an. Ein
+Rückfall auf `localStorage` wäre bequemer, erzeugte aber Datensätze, die nur auf
+einem Rechner existieren und beim nächsten Start verschwunden wären.
 
-Es wird eine Beispielpartie mit ausgeliefert (in der Historie als „Beispiel“
-gekennzeichnet), damit beim ersten Aufruf etwas zu sehen ist; „Beispiel
-entfernen“ leert sie.
+Aktualisierung ohne Polling war früher ein `storage`-Event, weil `localStorage`
+zwar fensterübergreifend ist, aber nur *andere* Fenster benachrichtigt. Aus der
+Datenbank kommt so etwas nicht heraus: `api.subscribe` meldet jede eigene Änderung
+sofort und fragt zusätzlich alle drei Sekunden nach, damit auch andere Fenster
+mitkommen. `useLiveData` abonniert das. Rendert nur bei echter Änderung neu
+(Vergleich über den JSON-Text), sonst flackert jede Liste im Takt.
 
-### API-Vertrag für das Rust-Backend
+Die Beispielpartie aus `backend/migrations/20251007000001_seed_demo_session.sql`
+landet in der Historie als „Beispiel“ markiert; „Beispiel entfernen“ löscht sie
+per `DELETE /api/demo-data` samt Zügen.
 
-`lib/api.ts` ist bewusst 1:1 auf die REST-Routen aus `backend/src/api.rs`
-zugeschnitten. Für den Umstieg genügt es, `localApi` durch eine HTTP-Variante zu
-ersetzen – die Oberfläche ruft ausschließlich `api` auf.
+### API-Vertrag mit dem Rust-Backend
 
-| Methode | Route                         | Datenhaltung (`Api`)         | DB-Tabellen |
-| ------- | ----------------------------- | ---------------------------- | ----------- |
-| GET     | `/api/health`                 | –                            | –           |
-| GET     | `/api/users`                  | `getUsers`                   | `users`, `v_user_permissions` |
-| GET     | `/api/games`                  | `getGameTypes`               | `game_types` |
-| GET     | `/api/sessions`               | `listSessions`               | `game_sessions`, `game_session_players` |
-| POST    | `/api/sessions`               | `createSession`              | `game_sessions`, `game_session_players` |
-| GET     | `/api/sessions/{id}`          | `getSession`                 | dito |
-| POST    | `/api/sessions/{id}/pause`    | `pauseSession`               | `game_sessions` |
-| POST    | `/api/sessions/{id}/resume`   | `resumeSession`              | dito |
-| POST    | `/api/sessions/{id}/abort`    | `abortSession`               | `game_sessions` |
-| POST    | `/api/sessions/{id}/surrender`| `surrenderSession`           | dito |
-| POST    | `/api/connect-four/games`     | `recordConnectFourGame`      | `game_sessions`, `moves` |
-| GET     | `/api/connect-four/games`     | `listGames`                  | dito |
+`lib/api.ts` ist 1:1 auf die Routen aus `backend/src/api.rs` zugeschnitten; die
+Oberfläche ruft ausschließlich `api` auf.
+
+| Methode | Route                          | Datenhaltung (`Api`)    | DB-Tabellen |
+| ------- | ------------------------------ | ----------------------- | ----------- |
+| GET     | `/api/health`                  | –                       | –           |
+| GET     | `/api/users`                   | `getUsers`              | `users`     |
+| GET     | `/api/games`                   | `getGameTypes`          | `game_types` |
+| GET     | `/api/sessions`                | `listSessions`          | `game_sessions`, `game_session_players` |
+| POST    | `/api/sessions`                | `createSession`         | dito        |
+| GET     | `/api/sessions/{id}`           | `getSession`            | dito        |
+| POST    | `/api/sessions/{id}/pause`     | `pauseSession`          | `game_sessions` |
+| POST    | `/api/sessions/{id}/resume`    | `resumeSession`         | dito        |
+| POST    | `/api/sessions/{id}/abort`     | `abortSession`          | dito        |
+| POST    | `/api/sessions/{id}/surrender` | `surrenderSession`      | dito        |
+| POST    | `/api/connect-four/games`      | `recordConnectFourGame` | `game_sessions`, `moves` |
+| GET     | `/api/connect-four/games`      | `listGames`             | dito        |
+| DELETE  | `/api/demo-data`               | `clearDemoData`         | dito        |
+
+Drei Punkte, an denen Frontend und Backend sich verstehen müssen:
+
+1. **Eine gehostete Partie ist dieselbe Zeile wie ihre Sitzung.** Der eingefrorene
+   Hook `useConnectFour` kennt die Sitzungs-Id nicht – er schickt nur
+   `{ moves, winner }`. `lib/gameResultEndpoint.ts` ergänzt deshalb
+   `duration_ms` (echte Spielzeit ohne Pausen) und `session_id`, bevor der
+   Request das Fenster verlässt. Ohne die Verknüpfung entstünden zwei getrennte
+   Datensätze: eine offene Sitzung und eine anonyme Partie.
+2. **`duration_ms` kann nur das Fenster messen.** Der Server startet und stoppt
+   die Uhr nicht mit, das Brett läuft in genau einem Fenster.
+3. **Der Dev-Server leitet `/api` weiter.** `vite.config.ts` proxyt auf
+   `http://127.0.0.1:3000` (siehe `backend/.env`), überschreibbar mit
+   `BACKEND_URL`. Hinter nginx (Docker) macht nginx das statt Vite.
 
 Eine Pause setzt weder `outcome` noch `finished_at`. Beide dürfen laut
 `chk_session_outcome` in `game_sessions` nur zusammen gesetzt werden; der
 Pausenzustand gehört deshalb nach `metadata_json` (`paused_at`, `paused_ms`).
 
-Beim Umstieg sind zwei Punkte zu beachten:
-
-1. **`POST /api/connect-four/games` schließt die gehostete Sitzung an.** Der Hook
-   kennt die Sitzungs-Id nicht, sie kann also nur aus der Umgebung kommen
-   (z. B. ein Cookie, das das Spielfeld-Fenster beim Laden setzt). Ohne diese
-   Verknüpfung entstehen zwei getrennte Datensätze: eine leere Sitzung und eine
-   anonyme Partie. Aktuell löst das `gameResultBridge`, weil Frontend und
-   Datenhaltung im selben Tab laufen.
-2. **Der Dev-Server leitet `/api` weiter.** `vite.config.ts` proxyt auf
-   `http://127.0.0.1:3000` (siehe `backend/.env`), überschreibbar mit
-   `BACKEND_URL`.
-
-Der Vite-Dev-Server läuft ohne Backend trotzdem: `/api/connect-four/games` wird
-lokal beantwortet, alle übrigen Routen sind erst mit Backend aktiv.
+`GET /api/sessions` liefert nur gehostete Sitzungen. Partien aus `/play`
+bekommen eine eigene Zeile mit `metadata_json.ad_hoc` und tauchen deshalb nicht
+im Dashboard der Sitzungen auf, sondern unter „Partien ohne Sitzung“.
 
 ## Spielverläufe prüfen
 
