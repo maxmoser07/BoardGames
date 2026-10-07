@@ -16,28 +16,22 @@ BoardGames/
   docker-compose.yml         MySQL + API + Oberflaeche
   docker-compose.dev.yml     Ueberlagerung mit gemountetem Quelltext
   .env.example               Ports und Datenbank-Zugangsdaten fuer Compose
+  scripts/api-smoke.ps1      Durchlauf durch alle API-Routen
   package.json               Startskripte fuer beide Teile (siehe unten)
 ```
 
-## Voraussetzungen
+## Schnellstart: Docker
 
-| Tool       | Version                                    |
-| ---------- | ------------------------------------------ |
-| Node.js    | 20 oder neuer (entwickelt mit 24)          |
-| Rust       | edition 2024, also 1.85 oder neuer         |
-| MySQL      | 8.0.16 oder neuer (CHECK-Constraints)      |
-
-Wer Docker nimmt, braucht statt dessen nur Docker mit Compose ab Version 2.
-
-## Docker (empfohlen)
-
-Drei Container, ein Befehl: MySQL, API und Oberflaeche. Ein lokales Node, Rust
-oder MySQL ist dafuer nicht noetig.
+Nach dem Klonen genuegt dieser eine Befehl:
 
 ```bash
-cp .env.example .env    # optional: Ports, Datenbankname, Passwoerter
 docker compose up -d --build
 ```
+
+Danach laeuft die Oberflaeche auf **http://localhost:5173**. Im Browser solltest
+du den Katalog mit „Vier Gewinnt“ sehen, unter „Sitzungen“ eine Beispielpartie
+und oben vier Personen zum Auswaehlen - das kommt alles aus den Migrationen,
+nicht aus dem Browser.
 
 | Adresse                          | Inhalt                                      |
 | -------------------------------- | ------------------------------------------- |
@@ -45,28 +39,79 @@ docker compose up -d --build
 | http://localhost:3000/api/health | API direkt (json)                           |
 | 127.0.0.1:3306                   | MySQL fuer SQL-Clients                       |
 
-Reihenfolge beim Start: `db` meldet healthy, dann startet `backend` und fuehrt
-die Migrationen aus, darauf `frontend`. Die Oberflaeche ist also erst da, wenn
-die API laeuft. `/api` reicht nginx an `backend:3000` weiter, derselbe Trick wie
-der Vite-Proxy in `vite.config.ts`.
+Voraussetzung ist nur Docker: Desktop oder die Engine mit Compose **V2**, also
+das `docker compose`-Kommando (`docker-compose` ohne Leerzeichen geht nicht).
+Pruefen mit `docker compose version`. Ein lokales Node, Rust oder MySQL wird
+nicht gebraucht.
 
-Zu den Ports: 5173 ist derselbe wie beim Dev-Server. Laeuft `npm run dev`
-noch, nimmt der zuerst den Port, und der Aufruf landet im Dev-Server statt in
-nginx. Dann `FRONTEND_PORT` in `.env` aendern oder den Dev-Server beenden.
-Genauso liegen 3000 und 3306.
+Der erste Build dauert einige Minuten: das Backend kompiliert die Rust-
+Abhaengigkeiten, das Frontend holt die npm-Pakete. Danach ist ein Image in
+wenigen Sekunden neu gebaut.
+
+### Laeuft es?
 
 ```bash
-npm run docker:logs      # Logs aller drei Container
-npm run docker:ps        # Status und Ports
-npm run docker:down      # stoppen, die Datenbank bleibt
-npm run docker:db:reset  # auch die Datenbank wieder loeschen
+docker compose ps                      # alle drei muessen "healthy" zeigen
+curl http://localhost:3000/api/health  # {"status":"ok"}
 ```
 
-Datenbank und Benutzer legt das `mysql`-Image selbst an (`MYSQL_*` in
-`docker-compose.yml`), der SQL-Block weiter unten entfaellt damit. Das Volume
-`db-data` ueberlebt `docker compose down`; nur `docker:db:reset` leert es.
+Beim allerersten Start auf einem frischen Volume passiert das in dieser
+Reihenfolge:
 
-Was in den Containern laeuft:
+1. `db` startet MySQL, legt Datenbank und Benutzer selbst an (`MYSQL_*` in
+   `docker-compose.yml`) und wartet, bis es healthy ist.
+2. `backend` startet, verbindet sich und fuehrt die Migrationen aus: Schema,
+   vier Beispielpersonen, eine Beispielpartie.
+3. `frontend` startet nginx und reicht `/api` an `backend:3000` weiter.
+
+Die Datenbank ist also nie leer, sondern enthaelt genau das, was in
+`backend/migrations/` steht.
+
+### Ports muessen frei sein
+
+5173, 3000 und 3306 werden auf dem Host belegt. **5173 kollidiert mit einem
+laufenden `npm run dev`** - dann antwortet der Dev-Server statt des Containers.
+Ports und Zugangsdaten stehen in `.env`, die Vorlage ist `.env.example` und
+optional:
+
+```bash
+cp .env.example .env          # Windows: copy .env.example .env
+# darin z. B. FRONTEND_PORT=5180 setzen, dann:
+docker compose up -d
+```
+
+### Alltag
+
+| Befehl                           | Wirkung                                     |
+| -------------------------------- | ------------------------------------------- |
+| `docker compose up -d`           | starten, auch nach einer Aenderung an `.env` |
+| `docker compose ps`              | Status und Ports                            |
+| `docker compose logs -f`         | Logs aller drei Container                  |
+| `docker compose logs -f backend` | nur das Backend                              |
+| `docker compose down`            | stoppen, die Datenbank bleibt               |
+| `docker compose down -v`         | stoppen **und** Datenbank loeschen          |
+
+Dieselben Befehle gibt es als npm-Skripte: `docker:up`, `docker:ps`,
+`docker:logs`, `docker:down` und `docker:db:reset`.
+
+Die Datenbank liegt im Volume `db-data` und ueberlebt `docker compose down`.
+Weg damit ist sie nur ueber `down -v` oder `docker:db:reset` - danach legt
+der naechste Start sie samt Migrationen neu an.
+
+### Wenn etwas klemmt
+
+* **Ein Container startet nicht.** `docker compose logs <name>` ansehen. Der
+  haeufigste Grund ist ein belegter Port (siehe oben).
+* **Die Oberflaeche meldet „Das Backend ist nicht erreichbar“.** Dann laeuft
+  `backend` nicht: `docker compose ps` und `docker compose logs backend`.
+* **„Es laeuft bereits eine Partie“.** Es ist noch eine offene Sitzung da. Unter
+  `/sessions` anzeigen und dort beenden, oder `docker compose exec db mysql
+  -uboardgames -pboardgames boardgames -e "DELETE FROM game_sessions WHERE
+  outcome IS NULL;"`.
+* **Neu aufsetzen.** `docker compose down -v && docker compose up -d` loescht
+  die Datenbank und legt sie mit den Migrationen neu an.
+
+## Wie es im Container aussieht
 
 * `backend/Dockerfile` baut mit `cargo build --release --locked`, legt das
   Ergebnis auf `debian:bookworm-slim` und startet danach als Benutzer
@@ -78,8 +123,10 @@ Was in den Containern laeuft:
 * Beide Images legen erst die Abhaengigkeiten und dann den Code an, sodass
   `docker compose build backend` nach einer Codeaenderung nicht den ganzen
   Dependency-Stack neu kompiliert.
+* `backend/target/` ist zwar eingecheckt, `.dockerignore` schliesst es aber aus
+  - sonst waere es Teil jedes Build-Kontexts.
 
-### Entwicklung mit Docker
+## Entwicklung mit Docker
 
 `docker-compose.dev.yml` legt sich ueber `docker-compose.yml`: gemounteter
 Quelltext, Vite-Dev-Server mit HMR statt nginx, `cargo run` statt
@@ -94,6 +141,16 @@ Zwei Einschraenkungen. `cargo watch` laeuft nicht im Container, Aenderungen an
 Docker auf Windows keine Datei-Events liefert, pollt der Vite-Server
 (`CHOKIDAR_USEPOLLING` in der Override). Fuer den Editierzyklus auf dem Host
 bleibt `npm run dev:all` die schnellere Wahl.
+
+## Ohne Docker
+
+Dann laeuft alles direkt auf dem Rechner, und diese Werkzeuge brauchst du:
+
+| Tool       | Version                                    |
+| ---------- | ------------------------------------------ |
+| Node.js    | 20 oder neuer (entwickelt mit 24)          |
+| Rust       | edition 2024, also 1.85 oder neuer         |
+| MySQL      | 8.0.16 oder neuer (CHECK-Constraints)      |
 
 ## Einmalig einrichten
 
