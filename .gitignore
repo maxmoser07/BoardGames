@@ -4,3 +4,8 @@ node_modules
 dist
 .env
 ~$*
+*.zip
+.idea/
+target/
+node_modules/
+.env

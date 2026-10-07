@@ -35,7 +35,15 @@ pub struct MoveDto {
 pub struct GameResultDto {
     pub moves: Vec<MoveDto>,
     pub winner: String,
+    /// Gespielte Zeit in Millisekunden ohne Pausen (optional; die Frontend-
+    /// Bruecke ergaenzt sie). Landet in `game_sessions.duration_ms`.
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
 }
+
+/// Obergrenze fuer `duration_ms`: 30 Tage. Schuetzt vor Unsinnswerten, aus
+/// denen sonst ein Startzeitpunkt weit in der Vergangenheit wuerde.
+const MAX_DURATION_MS: u64 = 30 * 24 * 60 * 60 * 1000;
 
 pub enum ApiError {
     BadRequest(String),
@@ -283,6 +291,14 @@ pub async fn record_connect_four_game(
     // ob das gemeldete Ergebnis wirklich zu den Zuegen passt.
     validate_moves(&dto.moves, outcome, winner)?;
 
+    if let Some(ms) = dto.duration_ms {
+        if ms > MAX_DURATION_MS {
+            return Err(ApiError::BadRequest(format!(
+                "duration_ms {ms} is larger than the allowed {MAX_DURATION_MS}"
+            )));
+        }
+    }
+
     let game_type_id = sqlx::query_scalar::<_, u32>("SELECT id FROM game_types WHERE name = ?")
         .bind(CONNECT_FOUR)
         .fetch_optional(&pool)
@@ -301,12 +317,27 @@ pub async fn record_connect_four_game(
 
     // `winner_id` bleibt NULL (es gibt noch keine Benutzer); die Siegerseite
     // steht stattdessen in `metadata_json`.
+    //
+    // Beide Zeitstempel kommen aus Rust in UTC. Vorher stand `started_at` auf
+    // dem Spaltenstandard (Zeitzone des MySQL-Servers) und `finished_at` auf
+    // UTC_TIMESTAMP() - bei einem Server ausserhalb von UTC lag der Start
+    // dadurch nach dem Ende.
+    let finished_at = chrono::Utc::now().naive_utc();
+    let started_at = match dto.duration_ms {
+        Some(ms) => finished_at - chrono::Duration::milliseconds(ms as i64),
+        None => finished_at,
+    };
+
     let insert = sqlx::query(
-        "INSERT INTO game_sessions (game_type_id, session_source, outcome, finished_at, metadata_json)
-         VALUES (?, 'digital', ?, UTC_TIMESTAMP(), ?)",
+        "INSERT INTO game_sessions
+             (game_type_id, session_source, outcome, started_at, finished_at, duration_ms, metadata_json)
+         VALUES (?, 'digital', ?, ?, ?, ?, ?)",
     )
         .bind(game_type_id)
         .bind(outcome)
+        .bind(started_at)
+        .bind(finished_at)
+        .bind(dto.duration_ms)
         .bind(json!({ "winner_side": winner }))
         .execute(&mut *tx)
         .await

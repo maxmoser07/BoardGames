@@ -238,6 +238,10 @@ describe("Connect-Four-Verlauf", () => {
     validateConnectFourResult({ moves: fullBoard, winner: "draw" });
   });
 
+  it("akzeptiert einen Sieg mit dem letzten Stein auf dem vollen Brett", () => {
+    validateConnectFourResult({ moves: fullBoard, winner: "red" });
+  });
+
   it("spielt Züge korrekt aufs Brett", () => {
     const grid = buildGrid(redWins);
     assert.equal(grid.length, ROWS);
@@ -260,6 +264,5 @@ describe("Connect-Four-Verlauf", () => {
     rejects({ moves: [{ turn: 1, player: "red", location: { x: 0, y: 3 } }], winner: "red" });
     rejects({ moves: [{ turn: 1, player: "red", location: { x: 0, y: 5 } }], winner: "yellow" });
     rejects({ moves: redWins, winner: "draw" });
-    rejects({ moves: fullBoard, winner: "red" });
   });
 });

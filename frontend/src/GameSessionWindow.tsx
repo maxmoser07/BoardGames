@@ -41,7 +41,7 @@ function nameOf(users: Map<number, User>, id: number): string {
 }
 
 /**
- * Spielfeld-Fenster, ge├Âffnet als Pop-up unter `/connectfour/:id`.
+ * Spielfeld-Fenster, geöffnet als Pop-up unter `/connectfour/:id`.
  *
  * Die Komponente wird vom Router mit `key={sessionId}` eingebunden, damit ein
  * Wechsel zu einer anderen Sitzung (Neue Partie) den Brettzustand neu aufbaut.
@@ -78,7 +78,7 @@ export const GameSessionWindow: React.FC<Props> = ({ sessionId }) => {
       <main className="window__main">
         {session.loading ? (
           <div className="window__center">
-            <Spinner label="Sitzung wird geladen ÔÇª" />
+            <Spinner label="Sitzung wird geladen …" />
           </div>
         ) : session.error ? (
           <Notice tone="danger" title="Sitzung konnte nicht geladen werden">
@@ -90,12 +90,12 @@ export const GameSessionWindow: React.FC<Props> = ({ sessionId }) => {
             title={`Sitzung ${sessionId} ist unbekannt`}
             action={
               <button type="button" className="btn btn--sm btn--primary" onClick={() => navigate("/")}>
-                Zur ├£bersicht
+                Zur Übersicht
               </button>
             }
           >
-            Sitzungen liegen im Browser dieses Ger├ñts. Diese Kennung stammt aus einem anderen Browser oder der
-            Verlauf wurde zur├╝ckgesetzt.
+            Sitzungen liegen im Browser dieses Geräts. Diese Kennung stammt aus einem anderen Browser oder der
+            Verlauf wurde zurückgesetzt.
           </Notice>
         ) : (
           <SessionBody session={loaded} users={userMap} />
@@ -111,7 +111,7 @@ interface SessionBodyProps {
 }
 
 /**
- * Brett plus Sitzungsverwaltung. Solange die Sitzung l├ñuft, steuert
+ * Brett plus Sitzungsverwaltung. Solange die Sitzung läuft, steuert
  * `ConnectFour` (und damit der eingefrorene `useConnectFour`) das Spiel; sobald
  * die Sitzung einen Ausgang hat, zeigt das Fenster das Endergebnis.
  */
@@ -128,11 +128,11 @@ function SessionBody({ session, users }: SessionBodyProps) {
   const now = useNow(running ? 1000 : 60_000);
 
   // Pausen, die vor diesem Fenster liefen, kennt nur der gemeinsame Store. Die
-  // Br├╝cke braucht sie, um beim Speichern die echte Spielzeit zu berechnen.
+  // Brücke braucht sie, um beim Speichern die echte Spielzeit zu berechnen.
   const pausedTotal = usePausedTime(session, now);
 
   // `useConnectFour` meldet das fertige Spiel per POST an
-  // /api/connect-four/games. Ohne laufendes Backend beantwortet diese Br├╝cke
+  // /api/connect-four/games. Ohne laufendes Backend beantwortet diese Brücke
   // den Request lokal, damit das Ergebnis in Historie und Dashboard landet.
   useEffect(
     () =>
@@ -173,7 +173,7 @@ function SessionBody({ session, users }: SessionBodyProps) {
 
   const handleSurrender = (side: Side) => {
     const userId = session.players[side];
-    if (window.confirm(`${nameOf(users, userId)} gibt auf ÔÇô ${SIDE_LABEL[opponent(side)]} gewinnt. Fortfahren?`)) {
+    if (window.confirm(`${nameOf(users, userId)} gibt auf – ${SIDE_LABEL[opponent(side)]} gewinnt. Fortfahren?`)) {
       void run(() => api.surrenderSession(session.id, userId), "Aufgabe konnte nicht registriert werden.");
     }
   };
@@ -203,7 +203,7 @@ function SessionBody({ session, users }: SessionBodyProps) {
                 <p className="player__name">{nameOf(users, session.players[side])}</p>
                 <p className="player__player-side">
                   <span className={`side__dot side__dot--${side}`} aria-hidden="true" />
-                  {SIDE_LABEL[side]} ┬À {side === "red" ? "beginnt" : "antwortet"}
+                  {SIDE_LABEL[side]} · {side === "red" ? "beginnt" : "antwortet"}
                 </p>
               </div>
             </div>
@@ -213,34 +213,34 @@ function SessionBody({ session, users }: SessionBodyProps) {
 
       {feedback ? <Notice tone="danger">{feedback}</Notice> : null}
 
-      {/* Das Brett geh├Ârt zur offenen Sitzung. Ist sie beendet, zeigt
-          `ResultPanel` stattdessen die Endposition ÔÇô sonst st├╝nden hier Brett
-          (inkl. ÔÇ×New GameÔÇ£) und Ergebnis nebeneinander. */}
+      {/* Das Brett gehört zur offenen Sitzung. Ist sie beendet, zeigt
+          `ResultPanel` stattdessen die Endposition – sonst stünden hier Brett
+          (inkl. „New Game“) und Ergebnis nebeneinander. */}
       {open ? (
         <>
           {paused ? (
             <Notice tone="warn" title="Sitzung pausiert">
-              Das Brett ist gesperrt, bis sie fortgesetzt wird. Die Spielzeit l├ñuft nicht weiter.
+              Das Brett ist gesperrt, bis sie fortgesetzt wird. Die Spielzeit läuft nicht weiter.
             </Notice>
           ) : (
             <p className="window__hint">
-              Beide Personen spielen abwechselnd in diesem Fenster ┬À l├ñuft seit{" "}
+              Beide Personen spielen abwechselnd in diesem Fenster · läuft seit{" "}
               <strong>{formatDuration(elapsed)}</strong>
             </p>
           )}
 
           {/* `ConnectFour` ist eingefroren und bietet keine Sperre. Solange
-              pausiert ist, wird das Brett gar nicht erst eingebunden ÔÇô sonst
-              k├Ânnten weiter Z├╝ge fallen, die niemand sehen kann. Beim
+              pausiert ist, wird das Brett gar nicht erst eingebunden – sonst
+              könnten weiter Züge fallen, die niemand sehen kann. Beim
               Fortsetzen kommt es mit `key` neu und verliert seinen Stand;
               deshalb bleibt die Sitzung hier bewusst bestehen und wir bitten um
               einen Neustart statt um einen leeren Brettzustand. */}
           {/* `ConnectFour` ist eingefroren: es kennt weder Pause noch Sperre,
               und der Brettzustand liegt in `useConnectFour`. Deshalb bleibt das
-              Brett eingebunden ÔÇô sonst ginge der Spielstand verloren ÔÇô und wird
-              von au├ƒen gesperrt:
-              `inert` nimmt Tastatur- und Zeigereingaben vollst├ñndig zur├╝ck
-              (die Zellen sind echte Buttons, ein Blende allein gen├╝gt nicht),
+              Brett eingebunden – sonst ginge der Spielstand verloren – und wird
+              von außen gesperrt:
+              `inert` nimmt Tastatur- und Zeigereingaben vollständig zurück
+              (die Zellen sind echte Buttons, ein Blende allein genügt nicht),
               die Deckschicht macht den Zustand sichtbar. */}
           <div className="board" data-paused={paused}>
             <div className="board__panel" inert={paused || undefined}>
@@ -343,7 +343,7 @@ function ResultPanel({ session, game, users, elapsed, busy, onRematch, onBack }:
           </div>
           {game ? (
             <div>
-              <dt>Z├╝ge</dt>
+              <dt>Züge</dt>
               <dd>{game.moves.length}</dd>
             </div>
           ) : null}
@@ -357,7 +357,7 @@ function ResultPanel({ session, game, users, elapsed, busy, onRematch, onBack }:
         </button>
         <button type="button" className="btn btn--ghost btn--sm" onClick={onBack}>
           <LayoutGrid aria-hidden="true" size={15} />
-          Zur ├£bersicht
+          Zur Übersicht
         </button>
       </div>
     </section>

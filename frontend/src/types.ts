@@ -1,10 +1,10 @@
 /**
- * Gemeinsame Dom├ñnen-Typen.
+ * Gemeinsame Domänen-Typen.
  *
  * Die Farbnamen stammen aus `useConnectFour.ts`, das eingefroren ist und nur
  * `"red" | "yellow"` kennt. Damit App, Spielfenster und Datenhaltung dieselben
  * Begriffe verwenden, sind Sitzung, Ergebnis und Spielfeld-Seite konsequent
- * ├╝ber `Side` modelliert:
+ * über `Side` modelliert:
  *
  *   seat 0 -> "red"    (Sitzung: playerRed)
  *   seat 1 -> "yellow" (Sitzung: playerYellow)
@@ -25,7 +25,7 @@ export const SIDE_LABEL: Record<Side, string> = {
   yellow: "Gelb",
 };
 
-/** Das andere Feld: wird f├╝r Sieg/Antrag/Ansicht ben├Âtigt. */
+/** Das andere Feld: wird für Sieg/Antrag/Ansicht benötigt. */
 export function opponent(side: Side): Side {
   return side === "red" ? "yellow" : "red";
 }
@@ -37,27 +37,27 @@ export interface User {
 }
 
 /**
- * Akzentfarbe eines Spiels. Als Schl├╝ssel statt Farbwert, damit die Kacheln
+ * Akzentfarbe eines Spiels. Als Schlüssel statt Farbwert, damit die Kacheln
  * Hell- und Dunkelmodus aus dem Stylesheet bekommen (siehe index.css).
  */
 export type AccentKey = "red" | "amber" | "violet" | "teal" | "blue" | "rose";
 
 export interface GameType {
   id: number;
-  /** Schl├╝ssel wie in `game_types.name` der Datenbank. */
+  /** Schlüssel wie in `game_types.name` der Datenbank. */
   name: string;
   displayName: string;
   /** Untertitel in der Katalog-Kachel. */
   tagline: string;
-  /** Ein Satz f├╝r die Detailseite. */
+  /** Ein Satz für die Detailseite. */
   description: string;
   maxPlayers: number;
   /** false = in der Datenbank angelegt, im Frontend aber noch nicht spielbar. */
   implemented: boolean;
-  /** Brettma├ƒe, `null` f├╝r Spiele ohne festes Raster. */
+  /** Brettmaße, `null` für Spiele ohne festes Raster. */
   board: { rows: number; cols: number } | null;
   accent: AccentKey;
-  /** Stichworte der Regeln f├╝r die Detailseite. */
+  /** Stichworte der Regeln für die Detailseite. */
   rules: string[];
   /** Reihenfolge im Katalog. */
   sortOrder: number;
@@ -66,13 +66,13 @@ export interface GameType {
 /**
  * `running` = offen, `paused` = angehalten, `finished`/`aborted` = beendet.
  *
- * Eine Pause setzt weder `outcome` noch `finishedAt` ÔÇô die CHECK-Constraints in
- * `game_sessions` erlauben beides nur zusammen. Der Pausenzustand geh├Ârt
+ * Eine Pause setzt weder `outcome` noch `finishedAt` – die CHECK-Constraints in
+ * `game_sessions` erlauben beides nur zusammen. Der Pausenzustand gehört
  * deshalb in `metadata_json` (siehe `pausedAt`), nicht in eine eigene Spalte.
  */
 export type SessionStatus = "running" | "paused" | "finished" | "aborted";
 
-/** Entspricht `game_sessions.outcome`, nur mit Farbnamen statt Sitzpl├ñtzen. */
+/** Entspricht `game_sessions.outcome`, nur mit Farbnamen statt Sitzplätzen. */
 export type GameOutcome = "red_win" | "yellow_win" | "draw" | "aborted";
 
 export type AbortReason = "host" | "surrender";
@@ -81,18 +81,18 @@ export interface GameSession {
   id: string;
   gameType: string;
   hostId: number;
-  /** Rot beginnt. Beide Pl├ñtze sind in der Praxis immer besetzt. */
+  /** Rot beginnt. Beide Plätze sind in der Praxis immer besetzt. */
   players: Record<Side, number>;
   createdAt: string;
   finishedAt: string | null;
   outcome: GameOutcome | null;
   abortReason: AbortReason | null;
-  /** Wer aufgegeben hat ÔÇô nur bei `abortReason === "surrender"`. */
+  /** Wer aufgegeben hat – nur bei `abortReason === "surrender"`. */
   surrenderedBy: number | null;
   /** Verweis auf den gespeicherten Spielverlauf, sobald die Partie endet. */
   gameId: string | null;
   /**
-   * Zeitpunkt der aktuellen Pause, `null` wenn die Sitzung l├ñuft oder
+   * Zeitpunkt der aktuellen Pause, `null` wenn die Sitzung läuft oder
    * beendet ist. Entspricht `metadata_json.paused_at` in der Datenbank.
    */
   pausedAt: string | null;
@@ -160,13 +160,13 @@ export function isPlayable(session: GameSession): boolean {
 }
 
 /**
- * Bisherige Spielzeit ohne Pausen. `now` kommt von au├ƒen, damit die Berechnung
- * in React nicht auf `Date.now()` w├ñhrend des Renderns angewiesen ist.
+ * Bisherige Spielzeit ohne Pausen. `now` kommt von außen, damit die Berechnung
+ * in React nicht auf `Date.now()` während des Renderns angewiesen ist.
  */
 export function playedMs(session: GameSession, now: number): number {
   const end = session.finishedAt ? Date.parse(session.finishedAt) : now;
   const total = end - Date.parse(session.createdAt);
-  // Eine noch laufende Pause z├ñhlt nicht zur Spielzeit.
+  // Eine noch laufende Pause zählt nicht zur Spielzeit.
   const openPause = session.pausedAt === null ? 0 : now - Date.parse(session.pausedAt);
   return Math.max(0, total - session.pausedMs - openPause);
 }

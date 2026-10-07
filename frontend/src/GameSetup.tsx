@@ -19,8 +19,8 @@ interface Props {
 const GAME_WINDOW = "width=980,height=880";
 
 /**
- * Einstellungen eines Spiels ÔÇô die zweite Stufe nach dem Katalog. Hier werden
- * die Personen gew├ñhlt und die Partie gestartet.
+ * Einstellungen eines Spiels – die zweite Stufe nach dem Katalog. Hier werden
+ * die Personen gewählt und die Partie gestartet.
  */
 const GameSetup: React.FC<Props> = ({ gameName }) => {
   const navigate = useNavigate();
@@ -44,7 +44,7 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
   const userMap = new Map(userList.map((user) => [user.id, user]));
   const gameSessions = (sessions.data ?? []).filter((session) => session.gameType === gameName);
   const gameGames = (games.data ?? []).filter((candidate) => candidate.gameType === gameName);
-  // Eine pausierte Partie ist ebenfalls ÔÇ×offen" und blockiert eine neue Sitzung.
+  // Eine pausierte Partie ist ebenfalls „offen" und blockiert eine neue Sitzung.
   const runningSession = gameSessions.find((session) => session.outcome === null) ?? null;
   const pausedSession = runningSession?.pausedAt !== null ? runningSession : null;
   const tally = { games: gameGames.length, sessions: gameSessions.length };
@@ -69,7 +69,7 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
         players: { red: redId, yellow: yellowId },
       });
       const path = windowPath(gameTypes.name, session.id);
-      if (!path) throw new ApiError("F├╝r dieses Spiel gibt es noch kein Spielfeld-Fenster.");
+      if (!path) throw new ApiError("Für dieses Spiel gibt es noch kein Spielfeld-Fenster.");
 
       openWindow(`${window.location.origin}${path}`, `${gameTypes.name}_${session.id}`);
       setRedId(null);
@@ -160,7 +160,7 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
                 </span>
                 <div>
                   <h2 className="panel__title">Noch nicht spielbar</h2>
-                  <p className="panel__subtitle">Geh├Ârt schon zum Katalog</p>
+                  <p className="panel__subtitle">Gehört schon zum Katalog</p>
                 </div>
               </header>
               <p className="text">
@@ -171,7 +171,7 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
               <div className="panel__actions">
                 <button type="button" className="btn btn--ghost" onClick={() => navigate("/")}>
                   <ArrowLeft aria-hidden="true" size={16} />
-                  Anderes Spiel w├ñhlen
+                  Anderes Spiel wählen
                 </button>
               </div>
             </section>
@@ -200,7 +200,7 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
               <span className="tile__fact">{gameTypes.maxPlayers} Spieler:innen</span>
               {gameTypes.board ? (
                 <span className="tile__fact">
-                  {gameTypes.board.cols}├ù{gameTypes.board.rows}
+                  {gameTypes.board.cols}×{gameTypes.board.rows}
                 </span>
               ) : null}
               {tally.games > 0 ? (
@@ -249,8 +249,8 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
                 </div>
 
                 {runningSession ? (
-                  <Notice tone="warn" title={pausedSession ? "Es ist bereits eine Partie pausiert" : "Es l├ñuft bereits eine Partie"}>
-                    Sitzung <code>{runningSession.id}</code> ist noch offen ÔÇô{" "}
+                  <Notice tone="warn" title={pausedSession ? "Es ist bereits eine Partie pausiert" : "Es läuft bereits eine Partie"}>
+                    Sitzung <code>{runningSession.id}</code> ist noch offen –{" "}
                     <button
                       type="button"
                       className="link"
@@ -259,7 +259,7 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
                         if (path) openWindow(`${window.location.origin}${path}`, `${gameTypes.name}_${runningSession.id}`);
                       }}
                     >
-                      Brett ├Âffnen
+                      Brett öffnen
                     </button>{" "}
                     oder sie unter{" "}
                     <button type="button" className="link" onClick={() => navigate("/sessions")}>
@@ -277,13 +277,13 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
                     title="Pop-up wurde blockiert"
                     action={
                       <button type="button" className="btn btn--sm btn--ghost" onClick={() => setFallbackUrl(null)}>
-                        Schlie├ƒen
+                        Schließen
                       </button>
                     }
                   >
-                    Der Browser hat das Spielfeld-Fenster unterdr├╝ckt.{" "}
+                    Der Browser hat das Spielfeld-Fenster unterdrückt.{" "}
                     <a className="link" href={fallbackUrl} target="_blank" rel="noreferrer">
-                      Brett hier ├Âffnen
+                      Brett hier öffnen
                     </a>
                     .
                   </Notice>
@@ -305,8 +305,8 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
                 </div>
                 <p className="hint">
                   {ready
-                    ? "Das Brett ├Âffnet sich als eigenes Fenster ÔÇô beide Personen spielen abwechselnd darin."
-                    : `W├ñhle zwei verschiedene Personen. ${SIDE_LABEL.red} beginnt.`}
+                    ? "Das Brett öffnet sich als eigenes Fenster – beide Personen spielen abwechselnd darin."
+                    : `Wähle zwei verschiedene Personen. ${SIDE_LABEL.red} beginnt.`}
                 </p>
               </>
             )}
@@ -347,7 +347,7 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
               </h2>
               <p className="panel__subtitle">
                 {gameGames.length > 0
-                  ? `${gameGames.length} ${gameGames.length === 1 ? "Verlauf" : "Verl├ñufe"} zu ${gameTypes.displayName}`
+                  ? `${gameGames.length} ${gameGames.length === 1 ? "Verlauf" : "Verläufe"} zu ${gameTypes.displayName}`
                   : "Noch keine Partie"}
               </p>
             </div>
@@ -386,7 +386,7 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
           ) : null}
         </section>
 
-        {/* ------------------------------------------- Personen im ├£berblick */}
+        {/* ------------------------------------------- Personen im Überblick */}
         {gameSessions.length > 0 ? (
           <section className="card panel" aria-labelledby="panel-players">
             <header className="panel__head">
@@ -408,7 +408,7 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
   );
 };
 
-/** Z├ñhler je Person aus den Sitzungen dieses Spiels. */
+/** Zähler je Person aus den Sitzungen dieses Spiels. */
 function PlayerStats({
   users,
   sessions,

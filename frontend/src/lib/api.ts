@@ -1,11 +1,11 @@
 /**
- * Datenzugriff f├╝r die Oberfl├ñche.
+ * Datenzugriff für die Oberfläche.
  *
  * Aktuell liegt die Datenhaltung im Browser (`localStorage`), damit Dashboard
  * und Spielfeld-Fenster denselben Spielstand sehen. Das interface `Api` ist
- * bewusst 1:1 auf die REST-Routen des Rust-Backends zugeschnitten ÔÇô f├╝r den
- * Umstieg gen├╝gt es, `localApi` durch `httpApi` zu ersetzen, die Komponenten
- * rufen ausschlie├ƒlich `api`:
+ * bewusst 1:1 auf die REST-Routen des Rust-Backends zugeschnitten – für den
+ * Umstieg genügt es, `localApi` durch `httpApi` zu ersetzen, die Komponenten
+ * rufen ausschließlich `api`:
  *
  *   GET    /api/health
  *   GET    /api/users
@@ -20,7 +20,7 @@
  *   POST   /api/connect-four/games             { moves, winner }   <- useConnectFour
  *   GET    /api/connect-four/games
  *
- * F├╝r Details siehe README.md, Abschnitt "Backend-Anbindung".
+ * Für Details siehe README.md, Abschnitt "Backend-Anbindung".
  */
 
 import {
@@ -49,7 +49,7 @@ export interface RecordGameContext {
   sessionId: string | null;
   players: Record<Side, number | null>;
   startedAt: number;
-  /** Bis zum Partieende angehaltene Zeit ÔÇô wird von der Dauer abgezogen. */
+  /** Bis zum Partieende angehaltene Zeit – wird von der Dauer abgezogen. */
   pausedMs: number;
 }
 
@@ -77,8 +77,8 @@ const KEY_SESSIONS = "sessions";
 const KEY_GAMES = "games";
 const KEY_SEEDED = "seeded";
 
-/* Kurz k├╝nstliche Latenz: sonst ist der Ladezustand nie zu sehen und die
-   Oberfl├ñche wirkt wie ein kaputter Bildschirm, wenn doch einmal gewartet
+/* Kurz künstliche Latenz: sonst ist der Ladezustand nie zu sehen und die
+   Oberfläche wirkt wie ein kaputter Bildschirm, wenn doch einmal gewartet
    werden muss. */
 const LATENCY_MS = 90;
 
@@ -101,7 +101,7 @@ const SEED_USERS: User[] = [
   { id: 4, username: "Mara", role: "admin" },
 ];
 
-// Der Katalog steht in `lib/gameTypes.ts`; die Datenbank liefert sp├ñter nur
+// Der Katalog steht in `lib/gameTypes.ts`; die Datenbank liefert später nur
 // die technischen Spalten dazu.
 
 /** Beispielpartie, damit die Historie beim ersten Aufruf nicht leer ist. */
@@ -162,15 +162,15 @@ function loadGameTypes(): GameType[] {
 }
 
 /**
- * Sitzungen aus fr├╝heren Versionen kennen `pausedAt` noch nicht. Fehlende
- * Felder werden hier erg├ñnzt, statt die Nutzerdaten zu verwerfen.
+ * Sitzungen aus früheren Versionen kennen `pausedAt` noch nicht. Fehlende
+ * Felder werden hier ergänzt, statt die Nutzerdaten zu verwerfen.
  */
 function normaliseSession(session: GameSession): GameSession {
   if (session.pausedAt !== undefined && session.pausedMs !== undefined) return session;
   return {
     ...session,
     pausedAt: session.pausedAt ?? null,
-    // ├ältere Datens├ñtze hatten keine Pausen, also ist nichts nachzuz├ñhlen.
+    // Ältere Datensätze hatten keine Pausen, also ist nichts nachzuzählen.
     pausedMs: session.pausedMs ?? 0,
   };
 }
@@ -203,7 +203,7 @@ function requireSession(id: string): GameSession {
   return session;
 }
 
-/** Sitzung, die noch nicht beendet ist ÔÇô Grundlage f├╝r Pause/Fortsetzen/Abbruch. */
+/** Sitzung, die noch nicht beendet ist – Grundlage für Pause/Fortsetzen/Abbruch. */
 function requireOpen(id: string): GameSession {
   const session = requireSession(id);
   if (session.outcome !== null) throw new ApiError("Diese Sitzung ist bereits beendet.");
@@ -259,12 +259,12 @@ export const localApi: Api = {
     const known = new Set(loadUsers().map((user) => user.id));
     for (const side of ["red", "yellow"] as const) {
       if (!known.has(input.players[side])) {
-        throw new ApiError(`Unbekannter Spieler f├╝r die Seite ${SIDE_LABEL[side]}.`);
+        throw new ApiError(`Unbekannter Spieler für die Seite ${SIDE_LABEL[side]}.`);
       }
     }
-    // Eine angehaltene Partie blockiert ebenfalls ÔÇô sie ist noch offen.
+    // Eine angehaltene Partie blockiert ebenfalls – sie ist noch offen.
     if (loadSessions().some((session) => session.outcome === null)) {
-      throw new ApiError("Es l├ñuft bereits eine Partie. Bitte zuerst die offene Sitzung beenden.");
+      throw new ApiError("Es läuft bereits eine Partie. Bitte zuerst die offene Sitzung beenden.");
     }
 
     const session: GameSession = {
@@ -292,7 +292,7 @@ export const localApi: Api = {
 
   async resumeSession(id) {
     const session = requireOpen(id);
-    if (session.pausedAt === null) throw new ApiError("Diese Sitzung l├ñuft bereits.");
+    if (session.pausedAt === null) throw new ApiError("Diese Sitzung läuft bereits.");
     // Die abgeschlossene Pause wird festgehalten, damit die Spielzeit auch nach
     // einem Neuladen des Fensters stimmt.
     const spent = Math.max(0, Date.now() - Date.parse(session.pausedAt));
@@ -307,7 +307,7 @@ export const localApi: Api = {
         outcome: "aborted",
         abortReason: "host",
         finishedAt: new Date().toISOString(),
-        // Eine offene Pause z├ñhlt nicht mehr zur Laufzeit.
+        // Eine offene Pause zählt nicht mehr zur Laufzeit.
         pausedAt: null,
       }),
     );
@@ -346,14 +346,14 @@ export const localApi: Api = {
       winner: result.winner,
       moves: result.moves,
       playedAt: new Date(endedAt).toISOString(),
-      // Nur die tats├ñchlich gespielte Zeit ÔÇô Pausen z├ñhlen nicht mit.
+      // Nur die tatsächlich gespielte Zeit – Pausen zählen nicht mit.
       durationMs: Math.max(0, endedAt - context.startedAt - context.pausedMs),
       players: { ...context.players },
     };
     write(KEY_GAMES, [game, ...loadGames()]);
 
     // Die gehostete Sitzung endet mit derselben Partie. Ist sie schon
-    // beendet (Host hat vorher gestoppt), bleibt ihr Ausgang unangetastet ÔÇô
+    // beendet (Host hat vorher gestoppt), bleibt ihr Ausgang unangetastet –
     // der Spielverlauf wird trotzdem gespeichert.
     if (context.sessionId) {
       const session = loadSessions().find((candidate) => candidate.id === context.sessionId);

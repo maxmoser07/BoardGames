@@ -65,9 +65,6 @@ export function validateConnectFourResult(result: ConnectFourResult): void {
   if (winner === "draw" && moves.length !== CELLS) {
     throw new InvalidResultError(`Ein Unentschieden braucht ein volles Brett, hier ${moves.length} von ${CELLS} Züge.`);
   }
-  if (winner !== "draw" && moves.length === CELLS) {
-    throw new InvalidResultError("Ein volles Brett kann nicht mit einem Sieg enden.");
-  }
   if (winner !== "draw" && !moves.some((move) => move.player === winner)) {
     throw new InvalidResultError(`Für den Sieg "${winner}" gibt es in diesem Spiel keinen Zug.`);
   }
