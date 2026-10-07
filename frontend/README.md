@@ -15,6 +15,25 @@ npm test           # Router, Ableitungen und Ergebnis-Pruefung (Node, ohne Brows
 Voraussetzung ist nur Node 20+. Ein laufendes Backend wird **nicht** benötigt –
 die Daten liegen im Browser (siehe [Datenhaltung](#datenhaltung)).
 
+## Auslieferung im Container
+
+`Dockerfile` baut mit `npm ci` und `npm run build`, ausgeliefert wird über
+`nginx.conf`:
+
+```bash
+docker build -t boardgames-frontend .
+docker run --rm -p 5173:80 boardgames-frontend
+```
+
+nginx liefert `dist/` aus, übernimmt den SPA-Fallback (`try_files … /index.html`,
+siehe [Routen](#routen)) und reicht `/api/` an `http://backend:3000` weiter –
+dieselbe Konstruktion wie der Proxy in `vite.config.ts`. Der Backend-Hostname
+wird pro Anfrage aufgelöst, der Container startet also auch dann, wenn die API
+noch nicht läuft.
+
+Zusammen mit API und Datenbank genügt `docker compose up -d --build` im
+Repository-Root, siehe [README.md](../README.md).
+
 ## Aufbau
 
 ```

@@ -1,0 +1,16 @@
+# Nur was npm ci und vite brauchen.
+node_modules/
+dist/
+
+# Testergebnisse, Logs
+*.log
+coverage/
+
+# Editor und Betriebssystem
+.idea/
+.vscode/
+.git/
+.gitignore
+Dockerfile
+.dockerignore
+README.md

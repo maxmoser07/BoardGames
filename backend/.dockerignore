@@ -1,0 +1,17 @@
+# Nur was der Rust-Build braucht: Cargo.toml, Cargo.lock, migrations/, src/.
+# target/ ist eingecheckt (siehe README) und waere sonst Gigabytes im Kontext.
+target/
+Cargo.lock.bak
+
+# Laufzeitkonfiguration aus dem .gitignore, wird per Environment gesetzt.
+.env
+.env.*
+
+# Editor und Betriebssystem
+.idea/
+.vscode/
+.git/
+.gitignore
+Dockerfile
+.dockerignore
+*.md

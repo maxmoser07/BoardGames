@@ -1,0 +1,82 @@
+# BoardGames im Regelbetrieb: MySQL, Rust-Backend, gebautes Frontend hinter nginx.
+#
+#   docker compose up -d --build
+#   Frontend  http://localhost:5173
+#   API       http://localhost:3000/api/health
+#   MySQL     127.0.0.1:3306
+#
+# Werte ueber .env im Wurzelverzeichnis steuerbar (siehe .env.example),
+# sonst greifen die Defaults unten.
+name: boardgames
+
+services:
+  # ---------------------------------------------------------------------------
+  # Datenbank. Legt Datenbank und Benutzer selbst an - das entfaellt den
+  # manuellen SQL-Schritt aus dem README.
+  # ---------------------------------------------------------------------------
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-boardgames}
+      MYSQL_USER: ${MYSQL_USER:-boardgames}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-boardgames}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-boardgames-root}
+    # CHECK-Constraints ab 8.0.16 (siehe backend/migrations) - Image-Pinning
+    # ist hier Pflicht, 8.0.x bewaehrt das.
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+    ports:
+      - "127.0.0.1:${MYSQL_PORT:-3306}:3306"
+    volumes:
+      - db-data:/var/lib/mysql
+    healthcheck:
+      # -h 127.0.0.1 statt Socket: waehrend der Erstinitialisierung laeuft der
+      # temporaere Server mit --skip-networking und antwortet so noch nicht.
+      test:
+        - CMD
+        - mysqladmin
+        - ping
+        - -h
+        - 127.0.0.1
+        - -uroot
+        - -p${MYSQL_ROOT_PASSWORD:-boardgames-root}
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # API. Startet erst, wenn die DB healthy ist, und fuehrt dann die Migrationen
+  # aus (sqlx::migrate! in backend/src/main.rs).
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      target: runtime
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER:-boardgames}:${MYSQL_PASSWORD:-boardgames}@db:3306/${MYSQL_DATABASE:-boardgames}
+      BIND_ADDR: 0.0.0.0:3000
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-3000}:3000"
+
+  # ---------------------------------------------------------------------------
+  # Oberflaeche. nginx liefert frontend/dist aus und proxyt /api an das Backend.
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+
+volumes:
+  db-data:
