@@ -6,11 +6,17 @@ Datenmodell ist bereits Spielunabhaengig.
 
 ```
 BoardGames/
-  frontend/          React-/Vite-Oberflaeche (siehe frontend/README.md)
-  backend/           Rust-API mit axum, Datenbankzugriff mit sqlx
-    migrations/      ausfuehrbares MySQL-Schema, einzige Quelle
-    src/             API-Routen, DB-Zeilen, Domänenmodelle
-  package.json       Startskripte fuer beide Teile (siehe unten)
+  frontend/                  React-/Vite-Oberflaeche (siehe frontend/README.md)
+    Dockerfile               Bau (Vite) und Auslieferung (nginx)
+    nginx.conf               statische Dateien, SPA-Fallback, /api-Proxy
+  backend/                   Rust-API mit axum, Datenbankzugriff mit sqlx
+    Dockerfile               Release-Binary und schlankes Laufzeit-Image
+    migrations/              ausfuehrbares MySQL-Schema, einzige Quelle
+    src/                     API-Routen, DB-Zeilen, Domänenmodelle
+  docker-compose.yml         MySQL + API + Oberflaeche
+  docker-compose.dev.yml     Ueberlagerung mit gemountetem Quelltext
+  .env.example               Ports und Datenbank-Zugangsdaten fuer Compose
+  package.json               Startskripte fuer beide Teile (siehe unten)
 ```
 
 ## Voraussetzungen
@@ -21,7 +27,79 @@ BoardGames/
 | Rust       | edition 2024, also 1.85 oder neuer         |
 | MySQL      | 8.0.16 oder neuer (CHECK-Constraints)      |
 
+Wer Docker nimmt, braucht statt dessen nur Docker mit Compose ab Version 2.
+
+## Docker (empfohlen)
+
+Drei Container, ein Befehl: MySQL, API und Oberflaeche. Ein lokales Node, Rust
+oder MySQL ist dafuer nicht noetig.
+
+```bash
+cp .env.example .env    # optional: Ports, Datenbankname, Passwoerter
+docker compose up -d --build
+```
+
+| Adresse                          | Inhalt                                      |
+| -------------------------------- | ------------------------------------------- |
+| http://localhost:5173            | Oberflaeche, nginx liefert `frontend/dist`  |
+| http://localhost:3000/api/health | API direkt (json)                           |
+| 127.0.0.1:3306                   | MySQL fuer SQL-Clients                       |
+
+Reihenfolge beim Start: `db` meldet healthy, dann startet `backend` und fuehrt
+die Migrationen aus, darauf `frontend`. Die Oberflaeche ist also erst da, wenn
+die API laeuft. `/api` reicht nginx an `backend:3000` weiter, derselbe Trick wie
+der Vite-Proxy in `vite.config.ts`.
+
+Zu den Ports: 5173 ist derselbe wie beim Dev-Server. Laeuft `npm run dev`
+noch, nimmt der zuerst den Port, und der Aufruf landet im Dev-Server statt in
+nginx. Dann `FRONTEND_PORT` in `.env` aendern oder den Dev-Server beenden.
+Genauso liegen 3000 und 3306.
+
+```bash
+npm run docker:logs      # Logs aller drei Container
+npm run docker:ps        # Status und Ports
+npm run docker:down      # stoppen, die Datenbank bleibt
+npm run docker:db:reset  # auch die Datenbank wieder loeschen
+```
+
+Datenbank und Benutzer legt das `mysql`-Image selbst an (`MYSQL_*` in
+`docker-compose.yml`), der SQL-Block weiter unten entfaellt damit. Das Volume
+`db-data` ueberlebt `docker compose down`; nur `docker:db:reset` leert es.
+
+Was in den Containern laeuft:
+
+* `backend/Dockerfile` baut mit `cargo build --release --locked`, legt das
+  Ergebnis auf `debian:bookworm-slim` und startet danach als Benutzer
+  `boardgames` (uid 10001), nicht als root. Der Healthcheck fragt
+  `/api/health`.
+* `frontend/Dockerfile` baut mit `npm ci` und `npm run build` (`tsc -b &&
+  vite build`) und liefert `dist/` ueber nginx aus. Build-Variablen gibt es
+  keine: das Frontend ruft ausschliesslich relative `/api`-Pfade.
+* Beide Images legen erst die Abhaengigkeiten und dann den Code an, sodass
+  `docker compose build backend` nach einer Codeaenderung nicht den ganzen
+  Dependency-Stack neu kompiliert.
+
+### Entwicklung mit Docker
+
+`docker-compose.dev.yml` legt sich ueber `docker-compose.yml`: gemounteter
+Quelltext, Vite-Dev-Server mit HMR statt nginx, `cargo run` statt
+Release-Binary. Die Adresse bleibt http://localhost:5173.
+
+```bash
+npm run docker:dev
+```
+
+Zwei Einschraenkungen. `cargo watch` laeuft nicht im Container, Aenderungen an
+`backend/src` wirken erst nach `docker compose restart backend`. Und weil
+Docker auf Windows keine Datei-Events liefert, pollt der Vite-Server
+(`CHOKIDAR_USEPOLLING` in der Override). Fuer den Editierzyklus auf dem Host
+bleibt `npm run dev:all` die schnellere Wahl.
+
 ## Einmalig einrichten
+
+Die folgenden drei Schritte gelten nur ohne Docker. Mit
+`docker compose up -d` fallen sie weg: die Container bauen, starten und
+initialisieren sich selbst.
 
 ### 1. Datenbank anlegen
 
@@ -60,7 +138,9 @@ Pakete in `frontend/`.
 
 ## Starten
 
-Drei Terminals, oder eines mit allem:
+Mit Docker: `docker compose up -d --build`, dazu der Abschnitt weiter oben.
+
+Ohne Docker drei Terminals, oder eines mit allem:
 
 ```bash
 npm run backend    # http://127.0.0.1:3000, fuehrt die Migrationen aus
@@ -100,7 +180,13 @@ npm test                    # Router, Ableitungen, Ergebnis-Pruefung (Node, ohne
 npm run lint                # eslint inkl. React-Compiler-Regeln
 npm run build               # tsc -b && vite build -> frontend/dist/
 npm run backend:check       # cargo check
+docker compose config       # beide Compose-Dateien gegenpruefen
+docker compose build        # beide Images bauen, ohne zu starten
 ```
+
+`npm test`, `npm run lint` und `npm run build` laufen unveraendert auch im
+Container. `npm run backend:check` braucht dort das `dev`-Target des
+Backend-Dockerfiles, sonst wird nur das Release-Binary gebaut.
 
 ## Schema aendern
 
@@ -116,8 +202,14 @@ Rust-Abgleich siehe die Kommentare in
 * **Kein Login.** "Angemeldet als" waehlt eine der Beispiel-Personen; die
   Rechtepruefung aus `v_user_permissions` wird erst mit dem Backend scharf.
 * **`website/boardgames/`** war ein veraltetes Duplikat des Frontends und wurde
-  nach `frontend/` verschoben. Das Original steckt in der Git-Historie.
+  nach `frontend/` verschoben. Das Original steckt in der Git-Historie. Was noch
+  davon da ist, ist ein alter `dist/`-Ordner, also Ausgabe und kein eigenes
+  Programm - deshalb bekommt er keinen Container.
 * **`backend/target/`** ist eingecheckt. Das ist Build-Ausgabe und gehoert nicht
-  ins Repository, wurde aber bewusst nicht entfernt.
+  ins Repository, wurde aber bewusst nicht entfernt. Die Dockerfiles schliessen
+  das Verzeichnis ueber `.dockerignore` aus, sonst waere es Teil jedes
+  Build-Kontexts.
+* **Kein TLS im Container.** nginx laeuft auf Port 80 ohne Zertifikat; fuer eine
+  oeffentliche Instanz gehoert ein Reverse Proxy davor.
 * Farben und Rollen stehen in `game_session_players.side`, nicht in festen
   Spalten: Rot ist Sitzplatz 0, Gelb Sitzplatz 1.

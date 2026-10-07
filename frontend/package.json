@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "node --test scripts/*.test.ts",
+    "check:charset": "node scripts/charset-check.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

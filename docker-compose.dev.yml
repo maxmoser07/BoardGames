@@ -1,0 +1,53 @@
+# Ueberschreibungen fuer docker-compose.yml.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# Das Backend laeuft mit "cargo run" statt als Release-Binary, mit gemountetem
+# Quelltext (Neustart = "docker compose restart backend"). Das Frontend laeuft
+# als Vite-Dev-Server mit HMR auf http://localhost:5173.
+
+services:
+  backend:
+    build:
+      context: ./backend
+      target: dev
+    # Der Dev-Build kompiliert unoptimiert und braucht deutlich laenger als
+    # das Release-Binary - dafuer gibt es hier keinen Healthcheck.
+    healthcheck:
+      disable: true
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER:-boardgames}:${MYSQL_PASSWORD:-boardgames}@db:3306/${MYSQL_DATABASE:-boardgames}
+      BIND_ADDR: 0.0.0.0:3000
+    volumes:
+      - ./backend/src:/usr/src/app/src
+      - ./backend/migrations:/usr/src/app/migrations
+      # target als Volume, sonst schreibt cargo in das gemountete Verzeichnis
+      # des Wirtssystems und verlangsamt jeden Build um Groessenordnungen.
+      - backend-target:/usr/src/app/target
+
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    # ports bleibt unveraendert: der Dev-Stage lauscht wie nginx auf Port 80,
+    # damit die Zuordnung aus docker-compose.yml (Host-Port 5173) gilt.
+    environment:
+      # Ziel des /api-Proxies aus vite.config.ts, im Compose-Netzwerk der
+      # Service-Name statt 127.0.0.1.
+      BACKEND_URL: http://backend:3000
+      # Docker-Desktop/Windows uebermittelt keine Datei-Events, chokidar
+      # braucht daher Polling.
+      CHOKIDAR_USEPOLLING: "true"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/scripts:/app/scripts
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      # node_modules aus dem Image behalten, nicht vom Host ueberschreiben
+      # (Windows und alpine-linux haben verschiedene optionale Abhaengigkeiten).
+      - frontend-node-modules:/app/node_modules
+
+volumes:
+  backend-target:
+  frontend-node-modules:
