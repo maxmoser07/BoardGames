@@ -209,3 +209,20 @@ export function statusLabel(status: SessionStatus): string {
 export function winnerToOutcome(winner: Side | "draw"): GameOutcome {
   return winner === "draw" ? "draw" : winner === "red" ? "red_win" : "yellow_win";
 }
+
+export type ReportStatus = "open" | "reviewed" | "resolved" | "dismissed";
+
+export interface PlayerReport {
+  id: number;
+  reporter_id: number | null;
+  reported_user_id: number;
+  session_id: number | null;
+  reason: string;
+  details: string | null;
+  status: ReportStatus;
+  admin_note: string | null;
+  reviewed_by: number | null;
+  created_at: string;
+  updated_at: string;
+  reviewed_at: string | null;
+}

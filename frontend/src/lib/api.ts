@@ -36,7 +36,9 @@ import {
   type GameOutcome,
   type GameSession,
   type GameType,
+  type PlayerReport,
   type RecordedGame,
+  type ReportStatus,
   type Side,
   type User,
   type UserRole,
@@ -72,6 +74,16 @@ export interface Api {
   recordConnectFourGame(result: ConnectFourResult, context: RecordGameContext): Promise<RecordedGame>;
   listGames(): Promise<RecordedGame[]>;
   clearDemoData(): Promise<void>;
+  getReports(filter?: { status?: ReportStatus; reportedUserId?: number; reporterId?: number }): Promise<PlayerReport[]>;
+  createReport(input: {
+    reporterId?: number | null;
+    reportedUserId: number;
+    sessionId?: number | null;
+    reason: string;
+    details?: string | null;
+  }): Promise<PlayerReport>;
+  updateReport(id: number, input: { status?: ReportStatus; adminNote?: string | null; reviewedBy?: number | null }): Promise<PlayerReport>;
+  deleteReport(id: number): Promise<void>;
   subscribe(listener: () => void): () => void;
 }
 
@@ -133,6 +145,21 @@ interface WireMove {
 interface WireGame {
   session: WireSession;
   moves: WireMove[];
+}
+
+interface WireReport {
+  id: number;
+  reporter_id: number | null;
+  reported_user_id: number;
+  session_id: number | null;
+  reason: string;
+  details: string | null;
+  status: ReportStatus;
+  admin_note: string | null;
+  reviewed_by: number | null;
+  created_at: string;
+  updated_at: string;
+  reviewed_at: string | null;
 }
 
 /* ---------------------------------------------------------- HTTP-Grundlagen */
@@ -377,6 +404,72 @@ async function clearDemoData(): Promise<void> {
   notify();
 }
 
+async function getReports(filter?: { status?: ReportStatus; reportedUserId?: number; reporterId?: number }): Promise<PlayerReport[]> {
+  const params = new URLSearchParams();
+  if (filter?.status) params.set("status", filter.status);
+  if (filter?.reportedUserId !== undefined) params.set("reported_user_id", String(filter.reportedUserId));
+  if (filter?.reporterId !== undefined) params.set("reporter_id", String(filter.reporterId));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const rows = await request<WireReport[]>(`/reports${suffix}`);
+  return rows.map(toReport);
+}
+
+function toReport(wire: WireReport): PlayerReport {
+  return {
+    id: wire.id,
+    reporter_id: wire.reporter_id,
+    reported_user_id: wire.reported_user_id,
+    session_id: wire.session_id,
+    reason: wire.reason,
+    details: wire.details,
+    status: wire.status,
+    admin_note: wire.admin_note,
+    reviewed_by: wire.reviewed_by,
+    created_at: wire.created_at,
+    updated_at: wire.updated_at,
+    reviewed_at: wire.reviewed_at,
+  };
+}
+
+async function createReport(input: {
+  reporterId?: number | null;
+  reportedUserId: number;
+  sessionId?: number | null;
+  reason: string;
+  details?: string | null;
+}): Promise<PlayerReport> {
+  const wire = await request<WireReport>("/reports", {
+    method: "POST",
+    body: JSON.stringify({
+      reporter_id: input.reporterId ?? null,
+      reported_user_id: input.reportedUserId,
+      session_id: input.sessionId ?? null,
+      reason: input.reason,
+      details: input.details ?? null,
+    }),
+  });
+  notify();
+  return toReport(wire);
+}
+
+async function updateReport(id: number, input: { status?: ReportStatus; adminNote?: string | null; reviewedBy?: number | null }): Promise<PlayerReport> {
+  const wire = await request<WireReport>(`/reports/${encodeURIComponent(String(id))}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      status: input.status,
+      admin_note: input.adminNote,
+      reviewed_by: input.reviewedBy,
+    }),
+  });
+  notify();
+  return toReport(wire);
+}
+
+async function deleteReport(id: number): Promise<void> {
+  await request(`/reports/${encodeURIComponent(String(id))}`, { method: "DELETE" });
+  notify();
+}
+
 /* ------------------------------------------------------------ Abonnements */
 
 /**
@@ -429,6 +522,10 @@ export const httpApi: Api = {
   recordConnectFourGame,
   listGames,
   clearDemoData,
+  getReports,
+  createReport,
+  updateReport,
+  deleteReport,
   subscribe,
 };
 

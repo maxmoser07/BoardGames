@@ -242,6 +242,11 @@ Datenzugriff der Oberflaeche:
 | GET     | `/api/connect-four/games`               | alle Verlaeufe                         |
 | GET     | `/api/connect-four/games/{session_id}`  | eine Partie                            |
 | DELETE  | `/api/demo-data`                        | Beispielpartie loeschen                |
+| GET     | `/api/reports`                          | Spieler-Meldungen (Filter: status, reported_user_id, reporter_id) |
+| POST    | `/api/reports`                          | Meldung anlegen                        |
+| GET     | `/api/reports/{id}`                     | eine Meldung                           |
+| PATCH   | `/api/reports/{id}`                     | Meldung pruefen / Status aendern        |
+| DELETE  | `/api/reports/{id}`                     | Meldung loeschen                       |
 
 Die Zustaende ohne eigene Spalte liegen in `game_sessions.metadata_json`:
 `paused_at`, `paused_ms`, `abort_reason`, `surrendered_by`, `winner_side` sowie

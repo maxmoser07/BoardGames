@@ -70,6 +70,23 @@ pub struct SessionPlayer {
     pub side: Option<String>,
 }
 
+/// Zeile aus `player_reports`.
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PlayerReport {
+    pub id: u64,
+    pub reporter_id: Option<u64>,
+    pub reported_user_id: u64,
+    pub session_id: Option<u64>,
+    pub reason: String,
+    pub details: Option<String>,
+    pub status: String,
+    pub admin_note: Option<String>,
+    pub reviewed_by: Option<u64>,
+    pub created_at: NaiveDateTime,
+    pub updated_at: NaiveDateTime,
+    pub reviewed_at: Option<NaiveDateTime>,
+}
+
 /// Zeile aus `moves`.
 ///
 /// `payload` ist bei Connect Four `{"col": x, "row": y, "side": "red"}`. Die

@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use axum::extract::rejection::{JsonRejection, PathRejection};
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use chrono::{Datelike, Timelike, Utc};
 use serde::Deserialize;
@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use sqlx::mysql::MySqlPool;
 use sqlx::{MySql, QueryBuilder, Transaction};
 
-use crate::db::{GameMove, GameType, Session, SessionPlayer, User};
+use crate::db::{GameMove, GameType, PlayerReport, Session, SessionPlayer, User};
 
 pub const CONNECT_FOUR: &str = "connect-four";
 const ROWS: usize = 6;
@@ -122,6 +122,20 @@ pub fn router() -> Router<MySqlPool> {
             get(read_connect_four_game),
         )
         .route("/api/demo-data", delete(delete_demo_data))
+        .route("/api/reports", get(list_reports))
+        .route("/api/reports", post(create_report))
+        .route("/api/reports/{id}", get(read_report))
+        .route("/api/reports/{id}", patch(update_report))
+        .route("/api/reports/{id}", put(update_report))
+        .route("/api/reports/{id}", delete(delete_report))
+        .route("/api/reports/{id}/review", post(update_report))
+        .route("/api/player-reports", get(list_reports))
+        .route("/api/player-reports", post(create_report))
+        .route("/api/player-reports/{id}", get(read_report))
+        .route("/api/player-reports/{id}", patch(update_report))
+        .route("/api/player-reports/{id}", put(update_report))
+        .route("/api/player-reports/{id}", delete(delete_report))
+        .route("/api/player-reports/{id}/review", post(update_report))
 }
 
 /// Kennung aus dem Pfad, `game_sessions.id` also eine Zahl.
@@ -945,6 +959,245 @@ pub async fn delete_demo_data(State(pool): State<MySqlPool>) -> Result<Json<Valu
         .await
         .map_err(internal)?;
     Ok(Json(json!({ "deleted": result.rows_affected() })))
+}
+
+/* --------------------------------------------------------------- Meldungen */
+
+#[derive(Debug, Deserialize)]
+pub struct ReportFilter {
+    status: Option<String>,
+    reported_user_id: Option<u64>,
+    reporter_id: Option<u64>,
+}
+
+pub async fn list_reports(
+    State(pool): State<MySqlPool>,
+    Query(filter): Query<ReportFilter>,
+) -> Result<Json<Value>, ApiError> {
+    if let Some(status) = &filter.status {
+        validate_report_status(status)?;
+    }
+    let mut qb = QueryBuilder::<MySql>::new(
+        "SELECT id, reporter_id, reported_user_id, session_id, reason, details, status,
+                admin_note, reviewed_by, created_at, updated_at, reviewed_at
+         FROM player_reports WHERE 1 = 1",
+    );
+    if let Some(status) = &filter.status {
+        qb.push(" AND status = ");
+        qb.push_bind(status.clone());
+    }
+    if let Some(reported) = filter.reported_user_id {
+        qb.push(" AND reported_user_id = ");
+        qb.push_bind(reported);
+    }
+    if let Some(reporter) = filter.reporter_id {
+        qb.push(" AND reporter_id = ");
+        qb.push_bind(reporter);
+    }
+    qb.push(" ORDER BY created_at DESC");
+
+    let reports = qb
+        .build_query_as::<PlayerReport>()
+        .fetch_all(&pool)
+        .await
+        .map_err(internal)?;
+    Ok(Json(json!(reports)))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateReportDto {
+    reporter_id: Option<u64>,
+    reported_user_id: u64,
+    session_id: Option<u64>,
+    reason: String,
+    details: Option<String>,
+}
+
+pub async fn create_report(
+    State(pool): State<MySqlPool>,
+    payload: Result<Json<CreateReportDto>, JsonRejection>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+
+    let reason = dto.reason.trim();
+    if reason.is_empty() {
+        return bad("reason must not be empty".into());
+    }
+    if let Some(reporter) = dto.reporter_id {
+        ensure_user_exists(&pool, reporter, "reporter").await?;
+    }
+    ensure_user_exists(&pool, dto.reported_user_id, "reported user").await?;
+    if let Some(session_id) = dto.session_id {
+        let exists = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM game_sessions WHERE id = ?",
+        )
+        .bind(session_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(internal)?;
+        if exists == 0 {
+            return Err(ApiError::NotFound(format!("no session with id {session_id}")));
+        }
+    }
+
+    let insert = sqlx::query(
+        "INSERT INTO player_reports
+            (reporter_id, reported_user_id, session_id, reason, details, status)
+         VALUES (?, ?, ?, ?, ?, 'open')",
+    )
+    .bind(dto.reporter_id)
+    .bind(dto.reported_user_id)
+    .bind(dto.session_id)
+    .bind(reason)
+    .bind(dto.details)
+    .execute(&pool)
+    .await
+    .map_err(internal)?;
+    let id = insert.last_insert_id();
+
+    let report = fetch_report(&pool, id).await?;
+    Ok((StatusCode::CREATED, Json(json!(report))))
+}
+
+pub async fn read_report(
+    State(pool): State<MySqlPool>,
+    id: Result<Path<String>, PathRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let id = path_id(id)?;
+    let report = fetch_report(&pool, id).await?;
+    Ok(Json(json!(report)))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateReportDto {
+    status: Option<String>,
+    admin_note: Option<String>,
+    reviewed_by: Option<u64>,
+}
+
+pub async fn update_report(
+    State(pool): State<MySqlPool>,
+    id: Result<Path<String>, PathRejection>,
+    payload: Result<Json<UpdateReportDto>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let id = path_id(id)?;
+    let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+
+    // Die Meldung muss existieren, bevor etwas geaendert wird.
+    let _ = fetch_report(&pool, id).await?;
+
+    if let Some(status) = &dto.status {
+        validate_report_status(status)?;
+    }
+    if let Some(reviewer) = dto.reviewed_by {
+        ensure_user_exists(&pool, reviewer, "reviewer").await?;
+    }
+
+    match dto.status.as_deref() {
+        Some("open") => {
+            sqlx::query(
+                "UPDATE player_reports
+                 SET status = 'open',
+                     admin_note = COALESCE(?, admin_note),
+                     reviewed_by = COALESCE(?, reviewed_by),
+                     reviewed_at = NULL
+                 WHERE id = ?",
+            )
+            .bind(dto.admin_note)
+            .bind(dto.reviewed_by)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .map_err(internal)?;
+        }
+        Some(status) => {
+            sqlx::query(
+                "UPDATE player_reports
+                 SET status = ?,
+                     admin_note = COALESCE(?, admin_note),
+                     reviewed_by = COALESCE(?, reviewed_by),
+                     reviewed_at = UTC_TIMESTAMP()
+                 WHERE id = ?",
+            )
+            .bind(status)
+            .bind(dto.admin_note)
+            .bind(dto.reviewed_by)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .map_err(internal)?;
+        }
+        None => {
+            sqlx::query(
+                "UPDATE player_reports
+                 SET admin_note = COALESCE(?, admin_note),
+                     reviewed_by = COALESCE(?, reviewed_by)
+                 WHERE id = ?",
+            )
+            .bind(dto.admin_note)
+            .bind(dto.reviewed_by)
+            .bind(id)
+            .execute(&pool)
+            .await
+            .map_err(internal)?;
+        }
+    }
+
+    let report = fetch_report(&pool, id).await?;
+    Ok(Json(json!(report)))
+}
+
+pub async fn delete_report(
+    State(pool): State<MySqlPool>,
+    id: Result<Path<String>, PathRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let id = path_id(id)?;
+    let _ = fetch_report(&pool, id).await?;
+    let result = sqlx::query("DELETE FROM player_reports WHERE id = ?")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .map_err(internal)?;
+    Ok(Json(json!({ "deleted": result.rows_affected() })))
+}
+
+async fn fetch_report(pool: &MySqlPool, id: u64) -> Result<PlayerReport, ApiError> {
+    sqlx::query_as::<_, PlayerReport>(
+        "SELECT id, reporter_id, reported_user_id, session_id, reason, details, status,
+                admin_note, reviewed_by, created_at, updated_at, reviewed_at
+         FROM player_reports WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(internal)?
+    .ok_or_else(|| ApiError::NotFound(format!("no report with id {id}")))
+}
+
+fn validate_report_status(status: &str) -> Result<(), ApiError> {
+    match status {
+        "open" | "reviewed" | "resolved" | "dismissed" => Ok(()),
+        other => Err(ApiError::BadRequest(format!("unknown report status '{other}'"))),
+    }
+}
+
+async fn ensure_user_exists(pool: &MySqlPool, id: u64, role: &str) -> Result<(), ApiError> {
+    let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .map_err(internal)?;
+    if exists == 0 {
+        return Err(ApiError::NotFound(format!("no {role} with id {id}")));
+    }
+    Ok(())
+}
+
+/// Kennung aus dem Pfad fuer Meldungen (Zahl).
+fn path_id(path: Result<Path<String>, PathRejection>) -> Result<u64, ApiError> {
+    let Path(raw) = path.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    raw.parse()
+        .map_err(|_| ApiError::NotFound(format!("no report with id '{raw}'")))
 }
 
 /* ------------------------------------------------------------ Brettpruefung */

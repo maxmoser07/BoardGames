@@ -3,6 +3,7 @@ import { Notice } from "./components/ui";
 import Catalog from "./Catalog";
 import GameSetup from "./GameSetup";
 import PlayView from "./PlayView";
+import ReportsView from "./ReportsView";
 import SessionsView from "./SessionsView";
 import { useNavigate, useRoute } from "./router";
 
@@ -21,6 +22,8 @@ export const App: React.FC = () => {
       return <GameSetup key={route.gameName} gameName={route.gameName} />;
     case "sessions":
       return <SessionsView />;
+    case "reports":
+      return <ReportsView />;
     case "play":
       return <PlayView />;
     case "game":

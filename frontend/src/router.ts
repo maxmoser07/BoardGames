@@ -15,6 +15,7 @@ export type Route =
   | { name: "catalog" }
   | { name: "setup"; gameName: string }
   | { name: "sessions" }
+  | { name: "reports" }
   | { name: "play" }
   | { name: "game"; sessionId: string }
   | { name: "notFound"; path: string };
@@ -33,6 +34,7 @@ export function parseRoute(pathname: string): Route {
 
   if (path === "/") return { name: "catalog" };
   if (path === "/sessions") return { name: "sessions" };
+  if (path === "/reports") return { name: "reports" };
   if (path === "/play") return { name: "play" };
 
   const setup = /^\/games\/([A-Za-z0-9_-]+)$/.exec(path);

@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
-import { History, LayoutGrid, ShieldCheck } from "lucide-react";
+import { Flag, History, LayoutGrid, ShieldCheck } from "lucide-react";
 
 import { ROLE_LABEL } from "../lib/format";
 import { useNavigate } from "../router";
 import type { User } from "../types";
 import { Logo } from "./Logo";
 
-export type ShellSection = "catalog" | "sessions";
+export type ShellSection = "catalog" | "sessions" | "reports";
 
 interface AppShellProps {
   users: User[];
@@ -20,6 +20,7 @@ interface AppShellProps {
 const NAV = [
   { path: "/", label: "Spiele", icon: LayoutGrid, match: "catalog" },
   { path: "/sessions", label: "Sitzungen", icon: History, match: "sessions" },
+  { path: "/reports", label: "Meldungen", icon: Flag, match: "reports" },
 ] as const;
 
 /** Rahmen des Katalogs und der Sitzungsübersicht. */
