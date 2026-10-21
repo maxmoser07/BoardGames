@@ -1,4 +1,5 @@
 import { GameSessionWindow } from "./GameSessionWindow";
+import LoginView from "./LoginView";
 import { Notice } from "./components/ui";
 import Catalog from "./Catalog";
 import GameSetup from "./GameSetup";
@@ -16,6 +17,8 @@ export const App: React.FC = () => {
   const navigate = useNavigate();
 
   switch (route.name) {
+    case "login":
+      return <LoginView />;
     case "catalog":
       return <Catalog />;
     case "setup":

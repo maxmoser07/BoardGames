@@ -62,6 +62,9 @@ export interface RecordGameContext {
 
 export interface Api {
   getUsers(): Promise<User[]>;
+  login(username: string, password: string): Promise<User>;
+  register(input: { username: string; password: string; email?: string | null; role?: string | null }): Promise<User>;
+  logout(): Promise<void>;
   getGameTypes(): Promise<GameType[]>;
   getGameType(name: string): Promise<GameType | null>;
   listSessions(): Promise<GameSession[]>;
@@ -289,6 +292,28 @@ async function getUsers(): Promise<User[]> {
   return await request<WireUser[]>("/users");
 }
 
+async function login(username: string, password: string): Promise<User> {
+  const wire = await request<{ id: number; username: string; role: UserRole; user?: WireUser }>("/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
+  const source = wire.user ?? { id: wire.id, username: wire.username, role: wire.role };
+  return { id: source.id, username: source.username, role: source.role };
+}
+
+async function register(input: { username: string; password: string; email?: string | null; role?: string | null }): Promise<User> {
+  const wire = await request<{ id: number; username: string; role: UserRole; user?: WireUser }>("/register", {
+    method: "POST",
+    body: JSON.stringify({ username: input.username, password: input.password, email: input.email ?? null, role: input.role ?? null }),
+  });
+  const source = wire.user ?? { id: wire.id, username: wire.username, role: wire.role };
+  return { id: source.id, username: source.username, role: source.role };
+}
+
+async function logout(): Promise<void> {
+  await request("/logout", { method: "POST" });
+}
+
 /**
  * Die technischen Spielen kommen aus der Datenbank, der Katalog (Regeln,
  * Vorschau, Reihenfolge) aus `lib/gameTypes.ts`. Deshalb werden beide
@@ -510,6 +535,9 @@ notify = () => {
 
 export const httpApi: Api = {
   getUsers,
+  login,
+  register,
+  logout,
   getGameTypes,
   getGameType,
   listSessions,

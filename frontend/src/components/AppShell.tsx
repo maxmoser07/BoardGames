@@ -3,6 +3,7 @@ import { Flag, History, LayoutGrid, ShieldCheck } from "lucide-react";
 
 import { ROLE_LABEL } from "../lib/format";
 import { useNavigate } from "../router";
+import { api } from "../lib/api";
 import type { User } from "../types";
 import { Logo } from "./Logo";
 
@@ -26,7 +27,7 @@ const NAV = [
 /** Rahmen des Katalogs und der Sitzungsübersicht. */
 export function AppShell({ users, currentUserId, onCurrentUserChange, active, children }: AppShellProps) {
   const navigate = useNavigate();
-  const currentUser = users.find((user) => user.id === currentUserId) ?? users[0];
+  const currentUser = currentUserId === 0 ? undefined : users.find((user) => user.id === currentUserId);
 
   return (
     <div className="shell">
@@ -57,23 +58,33 @@ export function AppShell({ users, currentUserId, onCurrentUserChange, active, ch
           })}
         </nav>
 
-        <label className="shell__user">
-          <span className="shell__user-label">
-            <ShieldCheck aria-hidden="true" size={14} />
-            Angemeldet als
-          </span>
-          <select
-            className="select select--compact"
-            value={currentUser?.id ?? ""}
-            onChange={(event) => onCurrentUserChange(Number(event.target.value))}
-          >
-            {users.map((user) => (
-              <option key={user.id} value={user.id}>
-                {user.username} · {ROLE_LABEL[user.role]}
-              </option>
-            ))}
-          </select>
-        </label>
+        {currentUser ? (
+          <div className="shell__user">
+            <span className="shell__user-label">
+              <ShieldCheck aria-hidden="true" size={14} />
+              {currentUser.username} · {ROLE_LABEL[currentUser.role]}
+            </span>
+            <button
+              type="button"
+              className="btn btn--sm"
+              onClick={async () => {
+                try {
+                  await api.logout();
+                } catch {
+                  // Lokal abmelden reicht für die Oberfläche.
+                }
+                onCurrentUserChange(0);
+                navigate("/login");
+              }}
+            >
+              Abmelden
+            </button>
+          </div>
+        ) : (
+          <button type="button" className="btn btn--sm btn--primary" onClick={() => navigate("/login")}>
+            Anmelden
+          </button>
+        )}
       </header>
 
       <main className="shell__main">{children}</main>

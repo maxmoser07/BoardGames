@@ -3,14 +3,23 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 /// Zeile aus `users`, wie `GET /api/users` sie ausliefert.
-///
-/// `password_hash` bleibt in der Datenbank und kommt nicht ins JSON; es gibt
-/// noch keinen Login (siehe 20251007000000_seed_users.sql).
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct User {
     pub id: u64,
     pub username: String,
     pub role: String,
+}
+
+/// Zeile aus `users` fuer die Anmeldung, inklusive Passwort-Hash und Sperre.
+#[derive(Debug, sqlx::FromRow)]
+pub struct AuthUser {
+    pub id: u64,
+    pub username: String,
+    pub email: String,
+    pub password_hash: String,
+    pub role: String,
+    pub is_locked: bool,
+    pub locked_until: Option<chrono::NaiveDateTime>,
 }
 
 /// Zeile aus `game_types`. Regeln, Texte und Vorschaubilder stehen weiterhin im

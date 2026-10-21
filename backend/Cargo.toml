@@ -6,6 +6,9 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 axum = "0.8"
+hex = "0.4"
+rand = "0.8"
+sha2 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 rust_decimal = "1"

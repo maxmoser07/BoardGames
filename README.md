@@ -290,10 +290,9 @@ Rust-Abgleich siehe die Kommentare in
 
 ## Bekannte Grenzen
 
-* **Kein Login.** "Angemeldet als" waehlt eine der vier Beispiel-Personen aus
-  `backend/migrations/20251007000000_seed_users.sql`; `password_hash` ist dort nur
-  ein Platzhalter, es wird sich nie angemeldet. Die Rechtepruefung aus
-  `v_user_permissions` wird erst mit dem Login scharf.
+* **Login.** Die vier Beispielpersonen aus `backend/migrations/20251007000000_seed_users.sql`
+  haben das Passwort `password`; neue Konten koennen ueber `/login` angelegt werden.
+  Die Rechtepruefung aus `v_user_permissions` kann darauf aufbauen.
 * **Eine offene Sitzung zur Zeit.** `POST /api/sessions` lehnt ab, wenn bereits
   eine laeuft (`outcome IS NULL`). Das entspricht der Regel der Oberflaeche,
   gilt aber fuer alle zusammen und nicht je Person.

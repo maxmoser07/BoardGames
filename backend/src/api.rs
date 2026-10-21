@@ -7,12 +7,15 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use chrono::{Datelike, Timelike, Utc};
+use hex::encode as hex_encode;
+use rand::RngCore;
+use sha2::{Digest, Sha256};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::mysql::MySqlPool;
 use sqlx::{MySql, QueryBuilder, Transaction};
 
-use crate::db::{GameMove, GameType, PlayerReport, Session, SessionPlayer, User};
+use crate::db::{AuthUser, GameMove, GameType, PlayerReport, Session, SessionPlayer, User};
 
 pub const CONNECT_FOUR: &str = "connect-four";
 const ROWS: usize = 6;
@@ -70,6 +73,9 @@ const SESSION_COLUMNS: &str = "
 pub enum ApiError {
     BadRequest(String),
     NotFound(String),
+    Unauthorized(String),
+    Forbidden(String),
+    Conflict(String),
     Internal(anyhow::Error),
 }
 
@@ -78,6 +84,9 @@ impl IntoResponse for ApiError {
         let (status, message) = match self {
             ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
             ApiError::NotFound(m) => (StatusCode::NOT_FOUND, m),
+            ApiError::Unauthorized(m) => (StatusCode::UNAUTHORIZED, m),
+            ApiError::Forbidden(m) => (StatusCode::FORBIDDEN, m),
+            ApiError::Conflict(m) => (StatusCode::CONFLICT, m),
             ApiError::Internal(e) => {
                 eprintln!("internal error: {e:#}");
                 (
@@ -104,6 +113,15 @@ pub fn router() -> Router<MySqlPool> {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/users", get(list_users))
+        .route("/api/login", post(login))
+        .route("/api/auth/login", post(login))
+        .route("/api/users/login", post(login))
+        .route("/api/register", post(register))
+        .route("/api/auth/register", post(register))
+        .route("/api/users/register", post(register))
+        .route("/api/signup", post(register))
+        .route("/api/logout", post(logout))
+        .route("/api/auth/logout", post(logout))
         .route("/api/games", get(list_game_types))
         .route("/api/sessions", get(list_sessions))
         .route("/api/sessions", post(create_session))
@@ -319,6 +337,170 @@ pub async fn list_users(State(pool): State<MySqlPool>) -> Result<Json<Value>, Ap
     .await
     .map_err(|e| ApiError::Internal(e.into()))?;
     Ok(Json(json!(users)))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LoginDto {
+    #[serde(alias = "user", alias = "name")]
+    username: Option<String>,
+    #[serde(alias = "mail", alias = "email")]
+    email: Option<String>,
+    password: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RegisterDto {
+    username: String,
+    #[serde(default)]
+    email: Option<String>,
+    password: String,
+    #[serde(default)]
+    role: Option<String>,
+}
+
+pub async fn login(
+    State(pool): State<MySqlPool>,
+    payload: Result<Json<LoginDto>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+
+    let username = dto.username.clone().unwrap_or_default().trim().to_string();
+    let email = dto.email.clone().unwrap_or_default().trim().to_string();
+    if username.is_empty() && email.is_empty() {
+        return bad("username or email is required".into());
+    }
+    if dto.password.is_empty() {
+        return bad("password is required".into());
+    }
+
+    let row = if !username.is_empty() {
+        sqlx::query_as::<_, AuthUser>(
+            "SELECT id, username, email, password_hash, role, is_locked, locked_until FROM users WHERE username = ?",
+        )
+        .bind(&username)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?
+    } else {
+        sqlx::query_as::<_, AuthUser>(
+            "SELECT id, username, email, password_hash, role, is_locked, locked_until FROM users WHERE email = ?",
+        )
+        .bind(&email)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?
+    };
+
+    let user = row.ok_or_else(|| ApiError::Unauthorized("invalid credentials".into()))?;
+    if user.is_locked {
+        let still_locked = match user.locked_until {
+            None => true,
+            Some(until) => until > chrono::Utc::now().naive_utc(),
+        };
+        if still_locked {
+            return Err(ApiError::Forbidden("account is locked".into()));
+        }
+    }
+    if !verify_password(&dto.password, &user.password_hash) {
+        return Err(ApiError::Unauthorized("invalid credentials".into()));
+    }
+
+    Ok(Json(json!({
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "role": user.role,
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role,
+        },
+        "token": user.id.to_string(),
+    })))
+}
+
+pub async fn register(
+    State(pool): State<MySqlPool>,
+    payload: Result<Json<RegisterDto>, JsonRejection>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+
+    let username = dto.username.trim();
+    if username.is_empty() {
+        return bad("username is required".into());
+    }
+    if dto.password.is_empty() {
+        return bad("password is required".into());
+    }
+    let email = dto
+        .email
+        .clone()
+        .unwrap_or_else(|| format!("{username}@example.invalid"))
+        .trim()
+        .to_string();
+    if email.is_empty() {
+        return bad("email is required".into());
+    }
+
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM users WHERE username = ? OR email = ?",
+    )
+    .bind(username)
+    .bind(&email)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.into()))?;
+    if exists > 0 {
+        return Err(ApiError::Conflict("username or email already exists".into()));
+    }
+
+    let role = match dto.role.as_deref() {
+        Some("admin") | Some("host") | Some("player") => dto.role.clone().unwrap(),
+        _ => "player".to_string(),
+    };
+    let hash = hash_password(&dto.password);
+
+    let insert = sqlx::query(
+        "INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)",
+    )
+    .bind(username)
+    .bind(&email)
+    .bind(&hash)
+    .bind(&role)
+    .execute(&pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.into()))?;
+    let id = insert.last_insert_id();
+
+    let user = sqlx::query_as::<_, AuthUser>(
+        "SELECT id, username, email, password_hash, role, is_locked, locked_until FROM users WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.into()))?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role,
+            "user": {
+                "id": user.id,
+                "username": user.username,
+                "email": user.email,
+                "role": user.role,
+            },
+            "token": user.id.to_string(),
+        })),
+    ))
+}
+
+pub async fn logout(State(_pool): State<MySqlPool>) -> Result<Json<Value>, ApiError> {
+    Ok(Json(json!({ "ok": true })))
 }
 
 pub async fn list_game_types(State(pool): State<MySqlPool>) -> Result<Json<Value>, ApiError> {
@@ -1329,6 +1511,57 @@ fn validate_moves(
         }
     }
     Ok(())
+}
+
+const PASSWORD_ITERATIONS: u32 = 100_000;
+
+fn hash_password(password: &str) -> String {
+    let mut salt = [0u8; 16];
+    rand::thread_rng().fill_bytes(&mut salt);
+    let salt_hex = hex_encode(salt);
+    let hash_hex = hash_with_salt(password, &salt, PASSWORD_ITERATIONS);
+    format!("sha256${PASSWORD_ITERATIONS}${salt_hex}${hash_hex}")
+}
+
+fn verify_password(password: &str, stored: &str) -> bool {
+    let parts: Vec<&str> = stored.split('$').collect();
+    if parts.len() != 4 || parts[0] != "sha256" {
+        // Alte Platzhalter (z. B. "!no-login-yet") lassen keine Anmeldung zu.
+        return false;
+    }
+    let iterations: u32 = match parts[1].parse() {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let salt = match hex::decode(parts[2]) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let expected = parts[3];
+    let actual = hash_with_salt(password, &salt, iterations);
+    // Konstanter Vergleich, um Timing-Angriffe zu erschweren.
+    if actual.len() != expected.len() {
+        return false;
+    }
+    actual
+        .bytes()
+        .zip(expected.bytes())
+        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+        == 0
+}
+
+fn hash_with_salt(password: &str, salt: &[u8], iterations: u32) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(salt);
+    hasher.update(password.as_bytes());
+    let mut out = hasher.finalize();
+    for _ in 1..iterations {
+        let mut hasher = Sha256::new();
+        hasher.update(out);
+        hasher.update(password.as_bytes());
+        out = hasher.finalize();
+    }
+    hex_encode(out)
 }
 
 #[cfg(test)]

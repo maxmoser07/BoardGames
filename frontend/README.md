@@ -201,8 +201,8 @@ entsprechen den serverseitigen Prüfungen in `backend/src/api.rs` und sind in
 
 ## Bekannte Grenzen
 
-* **Kein Login.** „Angemeldet als“ wählt eine der Beispiel-Personen; die
-  Rechteprüfung (`v_user_permissions`) wird erst mit dem Backend scharf.
+* **Login.** Anmeldung und Registrierung laufen über `/api/login` und `/api/register`;
+  die vier Beispiel-Personen haben das Passwort `password`.
 * **Nur eine gehostete Partie zur Zeit.** Ohne Server gibt es keine
   Sitzungs-IDs, die werkzeugübergreifend eindeutig sind – zwei gleichzeitige
   Fenster könnten ihr Ergebnis nicht eindeutig zuordnen. Die Oberfläche weist
