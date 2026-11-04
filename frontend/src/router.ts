@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 export type Route =
   | { name: "catalog" }
   | { name: "login" }
+  | { name: "profile" }
   | { name: "setup"; gameName: string }
   | { name: "sessions" }
   | { name: "reports" }
@@ -35,6 +36,7 @@ export function parseRoute(pathname: string): Route {
 
   if (path === "/") return { name: "catalog" };
   if (path === "/login") return { name: "login" };
+  if (path === "/profile") return { name: "profile" };
   if (path === "/sessions") return { name: "sessions" };
   if (path === "/reports") return { name: "reports" };
   if (path === "/play") return { name: "play" };

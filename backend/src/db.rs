@@ -10,6 +10,17 @@ pub struct User {
     pub role: String,
 }
 
+/// Öffentliches Profil einer Person - ohne Passwort-Hash.
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct UserProfile {
+    pub id: u64,
+    pub username: String,
+    pub email: String,
+    pub role: String,
+    /// `2026-10-07T06:40:40Z`, wie bei Sitzungen.
+    pub created_at: String,
+}
+
 /// Zeile aus `users` fuer die Anmeldung, inklusive Passwort-Hash und Sperre.
 #[derive(Debug, sqlx::FromRow)]
 pub struct AuthUser {

@@ -15,7 +15,9 @@ use serde_json::{json, Value};
 use sqlx::mysql::MySqlPool;
 use sqlx::{MySql, QueryBuilder, Transaction};
 
-use crate::db::{AuthUser, GameMove, GameType, PlayerReport, Session, SessionPlayer, User};
+use crate::db::{
+    AuthUser, GameMove, GameType, PlayerReport, Session, SessionPlayer, User, UserProfile,
+};
 
 pub const CONNECT_FOUR: &str = "connect-four";
 const ROWS: usize = 6;
@@ -113,6 +115,8 @@ pub fn router() -> Router<MySqlPool> {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/users", get(list_users))
+        .route("/api/users/{id}", get(read_user))
+        .route("/api/profile/{id}", get(read_user))
         .route("/api/login", post(login))
         .route("/api/auth/login", post(login))
         .route("/api/users/login", post(login))
@@ -339,6 +343,30 @@ pub async fn list_users(State(pool): State<MySqlPool>) -> Result<Json<Value>, Ap
     Ok(Json(json!(users)))
 }
 
+/// Öffentliches Profil einer Person.
+pub async fn read_user(
+    State(pool): State<MySqlPool>,
+    id: Result<Path<String>, PathRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let Path(raw) = id.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    let id: u64 = raw
+        .parse()
+        .map_err(|_| ApiError::NotFound(format!("no user with id '{raw}'")))?;
+
+    let user = sqlx::query_as::<_, UserProfile>(
+        "SELECT id, username, email, role,
+                CAST(DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS CHAR) AS created_at
+         FROM users WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(|e| ApiError::Internal(e.into()))?
+    .ok_or_else(|| ApiError::NotFound(format!("no user with id {id}")))?;
+
+    Ok(Json(json!(user)))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct LoginDto {
     #[serde(alias = "user", alias = "name")]
@@ -354,8 +382,6 @@ pub struct RegisterDto {
     #[serde(default)]
     email: Option<String>,
     password: String,
-    #[serde(default)]
-    role: Option<String>,
 }
 
 pub async fn login(
@@ -455,19 +481,16 @@ pub async fn register(
         return Err(ApiError::Conflict("username or email already exists".into()));
     }
 
-    let role = match dto.role.as_deref() {
-        Some("admin") | Some("host") | Some("player") => dto.role.clone().unwrap(),
-        _ => "player".to_string(),
-    };
+    // Selbstregistrierung legt immer Spieler:innen an. Rollen vergibt nur die
+    // Administration; so kann sich niemand selbst zum Admin machen.
     let hash = hash_password(&dto.password);
 
     let insert = sqlx::query(
-        "INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, ?)",
+        "INSERT INTO users (username, email, password_hash, role) VALUES (?, ?, ?, 'player')",
     )
     .bind(username)
     .bind(&email)
     .bind(&hash)
-    .bind(&role)
     .execute(&pool)
     .await
     .map_err(|e| ApiError::Internal(e.into()))?;

@@ -1410,6 +1410,36 @@ a {
   box-shadow: var(--shadow-sm);
 }
 
+.meta-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.meta-list__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px dashed var(--border);
+}
+
+.meta-list__row:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.meta-list__row dt {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.meta-list__row dd {
+  margin: 0;
+  text-align: right;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
 .panel {
   display: flex;
   flex-direction: column;

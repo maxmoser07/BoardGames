@@ -34,6 +34,10 @@ export interface User {
   id: number;
   username: string;
   role: UserRole;
+  /** Kommt nur aus dem Profil-Endpunkt, nicht aus der Benutzerliste. */
+  email?: string;
+  /** `2026-10-07T06:40:40Z`; nur im Profil vorhanden. */
+  createdAt?: string;
 }
 
 /**

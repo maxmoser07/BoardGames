@@ -230,6 +230,10 @@ Datenzugriff der Oberflaeche:
 | ------- | --------------------------------------- | -------------------------------------- |
 | GET     | `/api/health`                           | DB-Verbindung pruefen                  |
 | GET     | `/api/users`                            | Beispielpersonen aus `users`           |
+| GET     | `/api/users/{id}`                       | oeffentliches Profil einer Person      |
+| POST    | `/api/login`                            | Anmeldung mit Benutzername/Passwort    |
+| POST    | `/api/register`                         | neues Konto anlegen                    |
+| POST    | `/api/logout`                           | Abmeldung                              |
 | GET     | `/api/games`                            | Spieltypen aus `game_types`            |
 | GET     | `/api/sessions`                         | gehostete Sitzungen, neueste zuerst    |
 | POST    | `/api/sessions`                         | Sitzung anlegen, zwei Plaetze belegen  |

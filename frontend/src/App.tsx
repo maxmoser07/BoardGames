@@ -1,5 +1,6 @@
 import { GameSessionWindow } from "./GameSessionWindow";
 import LoginView from "./LoginView";
+import ProfileView from "./ProfileView";
 import { Notice } from "./components/ui";
 import Catalog from "./Catalog";
 import GameSetup from "./GameSetup";
@@ -19,6 +20,8 @@ export const App: React.FC = () => {
   switch (route.name) {
     case "login":
       return <LoginView />;
+    case "profile":
+      return <ProfileView />;
     case "catalog":
       return <Catalog />;
     case "setup":
