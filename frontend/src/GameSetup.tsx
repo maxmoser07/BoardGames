@@ -6,9 +6,10 @@ import { GameCard } from "./components/GameCard";
 import { PlayerPicker } from "./components/PlayerPicker";
 import { Avatar, Badge, EmptyState, Notice, Skeleton, Spinner } from "./components/ui";
 import { useLiveData } from "./hooks/useLiveData";
-import { usePersistentState } from "./hooks/usePersistentState";
 import { ApiError, api } from "./lib/api";
+import { useAuth } from "./lib/auth";
 import { formatRelative } from "./lib/format";
+import { canCreateSessions } from "./lib/permissions";
 import { useNavigate, windowPath } from "./router";
 import { SIDE_LABEL, type GameSession } from "./types";
 
@@ -24,13 +25,13 @@ const GAME_WINDOW = "width=980,height=880";
  */
 const GameSetup: React.FC<Props> = ({ gameName }) => {
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const game = useLiveData(() => api.getGameType(gameName));
   const users = useLiveData(() => api.getUsers());
   const sessions = useLiveData(() => api.listSessions());
   const games = useLiveData(() => api.listGames());
 
-  const [currentUserId] = usePersistentState("currentUserId", 1);
   const [redId, setRedId] = useState<number | null>(null);
   const [yellowId, setYellowId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -38,6 +39,7 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
   const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
 
   const gameTypes = game.data;
+  const canHost = canCreateSessions(user?.role);
   const loading = users.loading || game.loading;
 
   const userList = users.data ?? [];
@@ -47,6 +49,12 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
   // Eine pausierte Partie ist ebenfalls „offen" und blockiert eine neue Sitzung.
   const runningSession = gameSessions.find((session) => session.outcome === null) ?? null;
   const pausedSession = runningSession?.pausedAt !== null ? runningSession : null;
+  const myOpenSession =
+    gameSessions.find(
+      (session) =>
+        session.outcome === null &&
+        (session.players.red === user?.id || session.players.yellow === user?.id),
+    ) ?? null;
   const tally = { games: gameGames.length, sessions: gameSessions.length };
 
   const ready = redId !== null && yellowId !== null && redId !== yellowId;
@@ -58,14 +66,14 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
   };
 
   async function handleStart(): Promise<void> {
-    if (!ready || !gameTypes) return;
+    if (!ready || !gameTypes || !canHost || user === null) return;
     setBusy(true);
     setFeedback(null);
     setFallbackUrl(null);
     try {
       const session = await api.createSession({
         gameType: gameTypes.name,
-        hostId: currentUserId,
+        hostId: user.id,
         players: { red: redId, yellow: yellowId },
       });
       const path = windowPath(gameTypes.name, session.id);
@@ -223,11 +231,51 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
                 <h2 className="panel__title" id="panel-setup">
                   Einstellungen
                 </h2>
-                <p className="panel__subtitle">Wer spielt?</p>
+                <p className="panel__subtitle">{canHost ? "Wer spielt?" : "Dein Zugang"}</p>
               </div>
             </header>
 
-            {loading ? (
+            {!canHost ? (
+              <>
+                <Notice tone="info" title="Direkt spielen">
+                  Dein Konto ist als Spieler:in angelegt. Sitzungen mit Host und festen Plätzen legen nur Hosts
+                  und Admins an – du kannst direkt eine Partie starten.
+                </Notice>
+
+                {myOpenSession ? (
+                  <Notice tone="warn" title="Deine Partie ist noch offen">
+                    Sitzung <code>{myOpenSession.id}</code> läuft bereits –{" "}
+                    <button
+                      type="button"
+                      className="link"
+                      onClick={() => {
+                        const path = windowPath(gameTypes.name, myOpenSession.id);
+                        if (path) {
+                          openWindow(
+                            `${window.location.origin}${path}`,
+                            `${gameTypes.name}_${myOpenSession.id}`,
+                          );
+                        }
+                      }}
+                    >
+                      Brett öffnen
+                    </button>
+                    .
+                  </Notice>
+                ) : null}
+
+                <div className="panel__actions">
+                  <button type="button" className="btn btn--primary" onClick={() => navigate("/play")}>
+                    <Play aria-hidden="true" size={16} />
+                    Jetzt spielen
+                  </button>
+                </div>
+                <p className="hint">
+                  Die Partie läuft direkt im Tab. Der Verlauf wird gespeichert, ohne dass eine Sitzung angelegt
+                  wird.
+                </p>
+              </>
+            ) : loading ? (
               <Skeleton rows={4} />
             ) : (
               <>
@@ -351,7 +399,7 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
                   : "Noch keine Partie"}
               </p>
             </div>
-            {gameSessions.length > 0 ? (
+            {canHost && gameSessions.length > 0 ? (
               <button
                 type="button"
                 className="btn btn--ghost btn--sm panel__head-action"

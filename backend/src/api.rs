@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 
 use axum::extract::rejection::{JsonRejection, PathRejection};
-use axum::extract::{Path, Query, State};
-use axum::http::StatusCode;
+use axum::extract::{FromRequestParts, Path, Query, State};
+use axum::http::header::AUTHORIZATION;
+use axum::http::request::Parts;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
-use chrono::{Datelike, Timelike, Utc};
+use chrono::{Datelike, NaiveDateTime, Timelike, Utc};
 use hex::encode as hex_encode;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -16,7 +18,7 @@ use sqlx::mysql::MySqlPool;
 use sqlx::{MySql, QueryBuilder, Transaction};
 
 use crate::db::{
-    AuthUser, GameMove, GameType, PlayerReport, Session, SessionPlayer, User, UserProfile,
+    AdminUser, AuthUser, GameMove, GameType, PlayerReport, Session, SessionPlayer, User, UserProfile,
 };
 
 pub const CONNECT_FOUR: &str = "connect-four";
@@ -109,6 +111,209 @@ fn internal(e: impl Into<anyhow::Error>) -> ApiError {
     ApiError::Internal(e.into())
 }
 
+/* --------------------------------------------------------- Anmeldung, Rechte */
+
+/// Laufzeit eines Tokens. Nach Ablauf muss sich die Person neu anmelden.
+const TOKEN_TTL_DAYS: i64 = 7;
+
+/// Angemeldete Person plus die Rechte aus `v_user_permissions`.
+///
+/// Der Extraktor liest die Rechte bei jeder Anfrage neu aus der Datenbank.
+/// Dadurch wirken Rollen- und Sperraenderungen sofort, ohne dass ein Token
+/// erneuert werden muss.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct CurrentUser {
+    pub id: u64,
+    pub username: String,
+    pub role: String,
+    pub can_play: bool,
+    pub can_create_sessions: bool,
+    pub can_manage_users: bool,
+    pub can_lock_users: bool,
+    pub can_manage_reports: bool,
+    pub can_write: bool,
+}
+
+impl CurrentUser {
+    fn is_admin(&self) -> bool {
+        self.role == "admin"
+    }
+
+    /// Gesperrte Konten duerfen lesen, aber nichts schreiben.
+    fn require_write(&self) -> Result<(), ApiError> {
+        if self.can_write {
+            Ok(())
+        } else {
+            Err(ApiError::Forbidden("account is locked".into()))
+        }
+    }
+
+    /// Jede Rolle darf spielen - aber nur, solange das Konto nicht gesperrt ist.
+    fn require_play(&self) -> Result<(), ApiError> {
+        self.require_write()?;
+        if self.can_play {
+            Ok(())
+        } else {
+            Err(ApiError::Forbidden("role is not allowed to play".into()))
+        }
+    }
+
+    /// Nur `host` und `admin` legen Sitzungen an.
+    fn require_create_sessions(&self) -> Result<(), ApiError> {
+        self.require_write()?;
+        if self.can_create_sessions {
+            Ok(())
+        } else {
+            Err(ApiError::Forbidden(
+                "only hosts and admins may create sessions".into(),
+            ))
+        }
+    }
+
+    /// Administration von Benutzern und Meldungen.
+    fn require_admin(&self) -> Result<(), ApiError> {
+        self.require_write()?;
+        if self.can_manage_users && self.can_lock_users {
+            Ok(())
+        } else {
+            Err(ApiError::Forbidden("admin permission required".into()))
+        }
+    }
+
+    fn require_manage_reports(&self) -> Result<(), ApiError> {
+        self.require_write()?;
+        if self.can_manage_reports {
+            Ok(())
+        } else {
+            Err(ApiError::Forbidden("admin permission required".into()))
+        }
+    }
+
+    /// Der Host einer Sitzung oder ein Admin darf sie steuern.
+    fn require_session_manager(&self, session: &Session) -> Result<(), ApiError> {
+        self.require_write()?;
+        if self.is_admin() || session.host_id == Some(self.id) {
+            Ok(())
+        } else {
+            Err(ApiError::Forbidden(
+                "only the host or an admin may manage this session".into(),
+            ))
+        }
+    }
+}
+
+/// Liest `Authorization: Bearer <token>`.
+fn bearer_token(headers: &HeaderMap) -> Option<&str> {
+    let value = headers.get(AUTHORIZATION)?.to_str().ok()?;
+    let token = value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("bearer "))?
+        .trim();
+    if token.is_empty() { None } else { Some(token) }
+}
+
+fn hash_token(token: &str) -> String {
+    hex_encode(Sha256::digest(token.as_bytes()))
+}
+
+/// Prueft das Bearer-Token gegen `auth_tokens` und laedt die Rechte.
+impl FromRequestParts<MySqlPool> for CurrentUser {
+    type Rejection = ApiError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        pool: &MySqlPool,
+    ) -> Result<Self, Self::Rejection> {
+        let token = bearer_token(&parts.headers)
+            .ok_or_else(|| ApiError::Unauthorized("missing or invalid bearer token".into()))?;
+
+        sqlx::query_as::<_, CurrentUser>(
+            "SELECT v.id, v.username, v.role, v.can_play, v.can_create_sessions,
+                    v.can_manage_users, v.can_lock_users, v.can_manage_reports, v.can_write
+             FROM auth_tokens t
+             JOIN v_user_permissions v ON v.id = t.user_id
+             WHERE t.token_hash = ? AND t.expires_at > UTC_TIMESTAMP()",
+        )
+        .bind(hash_token(token))
+        .fetch_optional(pool)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| ApiError::Unauthorized("invalid or expired token".into()))
+    }
+}
+
+fn permissions_json(user: &CurrentUser) -> Value {
+    json!({
+        "can_play": user.can_play,
+        "can_create_sessions": user.can_create_sessions,
+        "can_manage_users": user.can_manage_users,
+        "can_lock_users": user.can_lock_users,
+        "can_manage_reports": user.can_manage_reports,
+        "can_write": user.can_write,
+    })
+}
+
+async fn fetch_permissions(pool: &MySqlPool, id: u64) -> Result<CurrentUser, ApiError> {
+    sqlx::query_as::<_, CurrentUser>(
+        "SELECT id, username, role, can_play, can_create_sessions,
+                can_manage_users, can_lock_users, can_manage_reports, can_write
+         FROM v_user_permissions WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(internal)?
+    .ok_or_else(|| ApiError::NotFound(format!("no user with id {id}")))
+}
+
+/// Erzeugt ein neues Bearer-Token. Zurueck kommen Token und Ablaufzeit;
+/// gespeichert wird nur der Hash.
+async fn issue_token(pool: &MySqlPool, user_id: u64) -> Result<(String, String), ApiError> {
+    // Abgelaufene Tokens bei der Gelegenheit aufraeumen.
+    sqlx::query("DELETE FROM auth_tokens WHERE expires_at <= UTC_TIMESTAMP()")
+        .execute(pool)
+        .await
+        .map_err(internal)?;
+
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    let token = hex_encode(bytes);
+    let expires = Utc::now() + chrono::Duration::days(TOKEN_TTL_DAYS);
+
+    sqlx::query("INSERT INTO auth_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)")
+        .bind(hash_token(&token))
+        .bind(user_id)
+        .bind(expires.naive_utc())
+        .execute(pool)
+        .await
+        .map_err(internal)?;
+
+    Ok((
+        token,
+        expires.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    ))
+}
+
+/// Meldet eine Person samt Rollenrechten. Wird von Login, Registrierung und
+/// `GET /api/me` benutzt.
+fn auth_json(user: &CurrentUser, email: Option<&str>, token: Option<(&str, &str)>) -> Value {
+    let mut body = json!({
+        "id": user.id,
+        "username": user.username,
+        "role": user.role,
+        "permissions": permissions_json(user),
+    });
+    if let Some(email) = email {
+        body["email"] = json!(email);
+    }
+    if let Some((token, expires_at)) = token {
+        body["token"] = json!(token);
+        body["expires_at"] = json!(expires_at);
+    }
+    body["user"] = body.clone();
+    body
+}
+
 /* -------------------------------------------------------------------- Routen */
 
 pub fn router() -> Router<MySqlPool> {
@@ -126,6 +331,10 @@ pub fn router() -> Router<MySqlPool> {
         .route("/api/signup", post(register))
         .route("/api/logout", post(logout))
         .route("/api/auth/logout", post(logout))
+        .route("/api/me", get(me))
+        .route("/api/admin/users", get(list_admin_users))
+        .route("/api/admin/users/{id}", patch(update_admin_user))
+        .route("/api/admin/users/{id}", put(update_admin_user))
         .route("/api/games", get(list_game_types))
         .route("/api/sessions", get(list_sessions))
         .route("/api/sessions", post(create_session))
@@ -333,9 +542,18 @@ async fn session_json_by_id(pool: &MySqlPool, id: u64) -> Result<Value, ApiError
 
 /* -------------------------------------------------------- Benutzer, Spieltypen */
 
-pub async fn list_users(State(pool): State<MySqlPool>) -> Result<Json<Value>, ApiError> {
+pub async fn list_users(
+    State(pool): State<MySqlPool>,
+    _user: CurrentUser,
+) -> Result<Json<Value>, ApiError> {
+    // Gesperrte Konten verschwinden aus der Auswahl; abgelaufene Sperren
+    // erscheinen automatisch wieder, weil die View neu rechnet.
     let users = sqlx::query_as::<_, User>(
-        "SELECT id, username, role FROM users WHERE is_locked = FALSE ORDER BY id",
+        "SELECT u.id, u.username, u.role
+         FROM users u
+         JOIN v_user_permissions p ON p.id = u.id
+         WHERE p.can_play AND p.can_write
+         ORDER BY u.id",
     )
     .fetch_all(&pool)
     .await
@@ -346,6 +564,7 @@ pub async fn list_users(State(pool): State<MySqlPool>) -> Result<Json<Value>, Ap
 /// Öffentliches Profil einer Person.
 pub async fn read_user(
     State(pool): State<MySqlPool>,
+    _user: CurrentUser,
     id: Result<Path<String>, PathRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let Path(raw) = id.map_err(|e| ApiError::BadRequest(e.body_text()))?;
@@ -401,7 +620,7 @@ pub async fn login(
 
     let row = if !username.is_empty() {
         sqlx::query_as::<_, AuthUser>(
-            "SELECT id, username, email, password_hash, role, is_locked, locked_until FROM users WHERE username = ?",
+            "SELECT id, email, password_hash, is_locked, locked_until FROM users WHERE username = ?",
         )
         .bind(&username)
         .fetch_optional(&pool)
@@ -409,7 +628,7 @@ pub async fn login(
         .map_err(|e| ApiError::Internal(e.into()))?
     } else {
         sqlx::query_as::<_, AuthUser>(
-            "SELECT id, username, email, password_hash, role, is_locked, locked_until FROM users WHERE email = ?",
+            "SELECT id, email, password_hash, is_locked, locked_until FROM users WHERE email = ?",
         )
         .bind(&email)
         .fetch_optional(&pool)
@@ -431,19 +650,13 @@ pub async fn login(
         return Err(ApiError::Unauthorized("invalid credentials".into()));
     }
 
-    Ok(Json(json!({
-        "id": user.id,
-        "username": user.username,
-        "email": user.email,
-        "role": user.role,
-        "user": {
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "role": user.role,
-        },
-        "token": user.id.to_string(),
-    })))
+    let permissions = fetch_permissions(&pool, user.id).await?;
+    let (token, expires_at) = issue_token(&pool, user.id).await?;
+    Ok(Json(auth_json(
+        &permissions,
+        Some(&user.email),
+        Some((&token, &expires_at)),
+    )))
 }
 
 pub async fn register(
@@ -496,37 +709,44 @@ pub async fn register(
     .map_err(|e| ApiError::Internal(e.into()))?;
     let id = insert.last_insert_id();
 
-    let user = sqlx::query_as::<_, AuthUser>(
-        "SELECT id, username, email, password_hash, role, is_locked, locked_until FROM users WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| ApiError::Internal(e.into()))?;
+    let permissions = fetch_permissions(&pool, id).await?;
+    let (token, expires_at) = issue_token(&pool, id).await?;
 
     Ok((
         StatusCode::CREATED,
-        Json(json!({
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "role": user.role,
-            "user": {
-                "id": user.id,
-                "username": user.username,
-                "email": user.email,
-                "role": user.role,
-            },
-            "token": user.id.to_string(),
-        })),
+        Json(auth_json(
+            &permissions,
+            Some(&email),
+            Some((&token, &expires_at)),
+        )),
     ))
 }
 
-pub async fn logout(State(_pool): State<MySqlPool>) -> Result<Json<Value>, ApiError> {
+pub async fn logout(
+    State(pool): State<MySqlPool>,
+    user: CurrentUser,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    if let Some(token) = bearer_token(&headers) {
+        sqlx::query("DELETE FROM auth_tokens WHERE token_hash = ? AND user_id = ?")
+            .bind(hash_token(token))
+            .bind(user.id)
+            .execute(&pool)
+            .await
+            .map_err(internal)?;
+    }
     Ok(Json(json!({ "ok": true })))
 }
 
-pub async fn list_game_types(State(pool): State<MySqlPool>) -> Result<Json<Value>, ApiError> {
+/// Die angemeldete Person samt Rechten - fuer die Oberflaeche nach einem Reload.
+pub async fn me(user: CurrentUser) -> Result<Json<Value>, ApiError> {
+    Ok(Json(auth_json(&user, None, None)))
+}
+
+pub async fn list_game_types(
+    State(pool): State<MySqlPool>,
+    _user: CurrentUser,
+) -> Result<Json<Value>, ApiError> {
     let games = sqlx::query_as::<_, GameType>(
         "SELECT id, name, display_name, max_players FROM game_types ORDER BY id",
     )
@@ -542,7 +762,10 @@ pub async fn list_game_types(State(pool): State<MySqlPool>) -> Result<Json<Value
 ///
 /// Ad-hoc-Partien (`/play` ohne Sitzung) stehen hier nicht: sie haben weder
 /// Host noch Teilnehmer und wuerden im Dashboard als leere Karten erscheinen.
-pub async fn list_sessions(State(pool): State<MySqlPool>) -> Result<Json<Value>, ApiError> {
+pub async fn list_sessions(
+    State(pool): State<MySqlPool>,
+    _user: CurrentUser,
+) -> Result<Json<Value>, ApiError> {
     let sql = format!(
         "{SESSION_COLUMNS}
          WHERE JSON_EXTRACT(s.metadata_json, '$.ad_hoc') IS NOT TRUE
@@ -564,6 +787,7 @@ pub async fn list_sessions(State(pool): State<MySqlPool>) -> Result<Json<Value>,
 
 pub async fn read_session(
     State(pool): State<MySqlPool>,
+    _user: CurrentUser,
     id: Result<Path<String>, PathRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let id = session_id(id)?;
@@ -591,10 +815,17 @@ pub struct SurrenderDto {
 
 pub async fn create_session(
     State(pool): State<MySqlPool>,
+    user: CurrentUser,
     payload: Result<Json<CreateSessionDto>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
 
+    user.require_create_sessions()?;
+    if !user.is_admin() && dto.host_id != user.id {
+        return Err(ApiError::Forbidden(
+            "hosts may only create their own sessions".into(),
+        ));
+    }
     if dto.players.red == dto.players.yellow {
         return bad("Rot und Gelb brauchen zwei verschiedene Spieler:innen.".into());
     }
@@ -611,13 +842,21 @@ pub async fn create_session(
         ("player", dto.players.red),
         ("player", dto.players.yellow),
     ] {
-        let known = sqlx::query_scalar::<_, u64>("SELECT id FROM users WHERE id = ?")
-            .bind(id)
-            .fetch_optional(&pool)
-            .await
-            .map_err(|e| ApiError::Internal(e.into()))?;
-        if known.is_none() {
+        let access = sqlx::query_as::<_, (String, bool)>(
+            "SELECT role, can_write FROM v_user_permissions WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+        let Some((actual_role, can_write)) = access else {
             return bad(format!("unknown {role} with id {id}"));
+        };
+        if !can_write {
+            return bad(format!("{role} with id {id} is locked"));
+        }
+        if role == "host" && actual_role != "host" && actual_role != "admin" {
+            return bad(format!("host with id {id} must have the host or admin role"));
         }
     }
 
@@ -683,10 +922,12 @@ async fn insert_session(
 
 pub async fn pause_session(
     State(pool): State<MySqlPool>,
+    user: CurrentUser,
     id: Result<Path<String>, PathRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let id = session_id(id)?;
     let session = require_open_session(&pool, id).await?;
+    user.require_session_manager(&session)?;
     if session.paused_at.is_some() {
         return bad("Diese Sitzung ist bereits pausiert.".into());
     }
@@ -709,10 +950,12 @@ pub async fn pause_session(
 
 pub async fn resume_session(
     State(pool): State<MySqlPool>,
+    user: CurrentUser,
     id: Result<Path<String>, PathRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let id = session_id(id)?;
     let session = require_open_session(&pool, id).await?;
+    user.require_session_manager(&session)?;
     let Some(paused_at) = session.paused_at.clone() else {
         return bad("Diese Sitzung laeuft bereits.".into());
     };
@@ -751,10 +994,12 @@ fn elapsed_ms_since(iso: &str) -> i64 {
 
 pub async fn abort_session(
     State(pool): State<MySqlPool>,
+    user: CurrentUser,
     id: Result<Path<String>, PathRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let id = session_id(id)?;
-    require_open_session(&pool, id).await?;
+    let session = require_open_session(&pool, id).await?;
+    user.require_session_manager(&session)?;
 
     sqlx::query(
         "UPDATE game_sessions
@@ -775,12 +1020,21 @@ pub async fn abort_session(
 
 pub async fn surrender_session(
     State(pool): State<MySqlPool>,
+    user: CurrentUser,
     id: Result<Path<String>, PathRejection>,
     payload: Result<Json<SurrenderDto>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let id = session_id(id)?;
     let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    user.require_play()?;
     require_open_session(&pool, id).await?;
+
+    // Aufgeben darf nur die Person selbst; Admins duerfen eine Aufgabe erzwingen.
+    if !user.is_admin() && dto.user_id != user.id {
+        return Err(ApiError::Forbidden(
+            "players may only surrender their own seat".into(),
+        ));
+    }
 
     // Der Aufgebende sitzt auf dem Platz, der verliert.
     let loser = sqlx::query_scalar::<_, String>(
@@ -866,9 +1120,11 @@ pub struct GameResultDto {
 /// einer Transaktion.
 pub async fn record_connect_four_game(
     State(pool): State<MySqlPool>,
+    user: CurrentUser,
     payload: Result<Json<GameResultDto>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    user.require_play()?;
     let cells = ROWS * COLS;
 
     if dto.moves.is_empty() {
@@ -942,7 +1198,7 @@ pub async fn record_connect_four_game(
 
     let mut tx = pool.begin().await.map_err(internal)?;
 
-    let (session_id, ad_hoc) = match dto.session_id {
+    let (session_id, ad_hoc, players) = match dto.session_id {
         // Gehostete Sitzung schliessen.
         Some(session_id) => {
             let session = sqlx::query_as::<_, Session>(&format!("{SESSION_COLUMNS} WHERE s.id = ?"))
@@ -964,6 +1220,18 @@ pub async fn record_connect_four_game(
                 )));
             }
 
+            // Nur Mitwirkende, der Host oder ein Admin duerfen das Ergebnis
+            // dieser Sitzung speichern.
+            let players = fetch_players_in(&mut tx, session_id).await?;
+            let is_seated = players
+                .iter()
+                .any(|player| player.user_id == Some(user.id));
+            if !user.is_admin() && session.host_id != Some(user.id) && !is_seated {
+                return Err(ApiError::Forbidden(
+                    "only participants, the host or an admin may record this session".into(),
+                ));
+            }
+
             // Die Pausenzeit steht schon in metadata_json, sie wird beim
             // Fortsetzen fortgeschrieben - hier bleibt sie unangetastet.
             sqlx::query(
@@ -982,11 +1250,11 @@ pub async fn record_connect_four_game(
             .await
             .map_err(internal)?;
 
-            (session_id, false)
+            (session_id, false, players)
         }
         // Partie ohne Sitzung: eigene Zeile, anonym.
         None => {
-            let mut metadata = json!({ "ad_hoc": true });
+            let mut metadata = json!({ "ad_hoc": true, "created_by": user.id });
             if let Some(side) = winner {
                 metadata["winner_side"] = json!(side);
             }
@@ -1021,12 +1289,12 @@ pub async fn record_connect_four_game(
                 .map_err(internal)?;
             }
 
-            (session_id, true)
+            let players = fetch_players_in(&mut tx, session_id).await?;
+            (session_id, true, players)
         }
     };
 
     // Vorhandene Plaetze uebernehmen, damit `moves.player_id` gesetzt ist.
-    let players = fetch_players_in(&mut tx, session_id).await?;
     for m in &dto.moves {
         sqlx::query(
             "INSERT INTO moves (session_id, move_index, player_id, move_source, payload)
@@ -1100,7 +1368,10 @@ async fn fetch_players_in(
 /// zwar ein `outcome`, aber keine Zuege. Ohne die Bedingung kaemen sie als
 /// "Verlauf mit 0 Zuegen" zurueck, und die Oberflaeche zeichnete daraus ein
 /// leeres Brett statt des Hinweises, dass gar nicht gespielt wurde.
-pub async fn list_connect_four_games(State(pool): State<MySqlPool>) -> Result<Json<Value>, ApiError> {
+pub async fn list_connect_four_games(
+    State(pool): State<MySqlPool>,
+    _user: CurrentUser,
+) -> Result<Json<Value>, ApiError> {
     let sql = format!(
         "{SESSION_COLUMNS}
          WHERE gt.name = ? AND s.outcome IS NOT NULL
@@ -1128,6 +1399,7 @@ pub async fn list_connect_four_games(State(pool): State<MySqlPool>) -> Result<Js
 
 pub async fn read_connect_four_game(
     State(pool): State<MySqlPool>,
+    _user: CurrentUser,
     path: Result<Path<String>, PathRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let session_id = session_id(path)?;
@@ -1158,7 +1430,11 @@ pub async fn read_connect_four_game(
 ///
 /// `game_session_players` und `moves` haengen an `ON DELETE CASCADE`, die
 /// Beispielpartie verschwindet also vollstaendig.
-pub async fn delete_demo_data(State(pool): State<MySqlPool>) -> Result<Json<Value>, ApiError> {
+pub async fn delete_demo_data(
+    State(pool): State<MySqlPool>,
+    user: CurrentUser,
+) -> Result<Json<Value>, ApiError> {
+    user.require_admin()?;
     let result = sqlx::query("DELETE FROM game_sessions WHERE JSON_EXTRACT(metadata_json, '$.demo') = TRUE")
         .execute(&pool)
         .await
@@ -1177,8 +1453,10 @@ pub struct ReportFilter {
 
 pub async fn list_reports(
     State(pool): State<MySqlPool>,
+    user: CurrentUser,
     Query(filter): Query<ReportFilter>,
 ) -> Result<Json<Value>, ApiError> {
+    user.require_manage_reports()?;
     if let Some(status) = &filter.status {
         validate_report_status(status)?;
     }
@@ -1211,7 +1489,6 @@ pub async fn list_reports(
 
 #[derive(Debug, Deserialize)]
 pub struct CreateReportDto {
-    reporter_id: Option<u64>,
     reported_user_id: u64,
     session_id: Option<u64>,
     reason: String,
@@ -1220,16 +1497,15 @@ pub struct CreateReportDto {
 
 pub async fn create_report(
     State(pool): State<MySqlPool>,
+    user: CurrentUser,
     payload: Result<Json<CreateReportDto>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    user.require_manage_reports()?;
 
     let reason = dto.reason.trim();
     if reason.is_empty() {
         return bad("reason must not be empty".into());
-    }
-    if let Some(reporter) = dto.reporter_id {
-        ensure_user_exists(&pool, reporter, "reporter").await?;
     }
     ensure_user_exists(&pool, dto.reported_user_id, "reported user").await?;
     if let Some(session_id) = dto.session_id {
@@ -1245,12 +1521,14 @@ pub async fn create_report(
         }
     }
 
+    // Der Melder ist immer die angemeldete Person; `reporter_id` aus dem Body
+    // wird bewusst ignoriert.
     let insert = sqlx::query(
         "INSERT INTO player_reports
             (reporter_id, reported_user_id, session_id, reason, details, status)
          VALUES (?, ?, ?, ?, ?, 'open')",
     )
-    .bind(dto.reporter_id)
+    .bind(user.id)
     .bind(dto.reported_user_id)
     .bind(dto.session_id)
     .bind(reason)
@@ -1266,8 +1544,10 @@ pub async fn create_report(
 
 pub async fn read_report(
     State(pool): State<MySqlPool>,
+    user: CurrentUser,
     id: Result<Path<String>, PathRejection>,
 ) -> Result<Json<Value>, ApiError> {
+    user.require_manage_reports()?;
     let id = path_id(id)?;
     let report = fetch_report(&pool, id).await?;
     Ok(Json(json!(report)))
@@ -1277,14 +1557,15 @@ pub async fn read_report(
 pub struct UpdateReportDto {
     status: Option<String>,
     admin_note: Option<String>,
-    reviewed_by: Option<u64>,
 }
 
 pub async fn update_report(
     State(pool): State<MySqlPool>,
+    user: CurrentUser,
     id: Result<Path<String>, PathRejection>,
     payload: Result<Json<UpdateReportDto>, JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
+    user.require_manage_reports()?;
     let id = path_id(id)?;
     let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
 
@@ -1294,9 +1575,6 @@ pub async fn update_report(
     if let Some(status) = &dto.status {
         validate_report_status(status)?;
     }
-    if let Some(reviewer) = dto.reviewed_by {
-        ensure_user_exists(&pool, reviewer, "reviewer").await?;
-    }
 
     match dto.status.as_deref() {
         Some("open") => {
@@ -1304,12 +1582,12 @@ pub async fn update_report(
                 "UPDATE player_reports
                  SET status = 'open',
                      admin_note = COALESCE(?, admin_note),
-                     reviewed_by = COALESCE(?, reviewed_by),
+                     reviewed_by = ?,
                      reviewed_at = NULL
                  WHERE id = ?",
             )
             .bind(dto.admin_note)
-            .bind(dto.reviewed_by)
+            .bind(user.id)
             .bind(id)
             .execute(&pool)
             .await
@@ -1320,13 +1598,13 @@ pub async fn update_report(
                 "UPDATE player_reports
                  SET status = ?,
                      admin_note = COALESCE(?, admin_note),
-                     reviewed_by = COALESCE(?, reviewed_by),
+                     reviewed_by = ?,
                      reviewed_at = UTC_TIMESTAMP()
                  WHERE id = ?",
             )
             .bind(status)
             .bind(dto.admin_note)
-            .bind(dto.reviewed_by)
+            .bind(user.id)
             .bind(id)
             .execute(&pool)
             .await
@@ -1336,11 +1614,11 @@ pub async fn update_report(
             sqlx::query(
                 "UPDATE player_reports
                  SET admin_note = COALESCE(?, admin_note),
-                     reviewed_by = COALESCE(?, reviewed_by)
+                     reviewed_by = ?
                  WHERE id = ?",
             )
             .bind(dto.admin_note)
-            .bind(dto.reviewed_by)
+            .bind(user.id)
             .bind(id)
             .execute(&pool)
             .await
@@ -1354,8 +1632,10 @@ pub async fn update_report(
 
 pub async fn delete_report(
     State(pool): State<MySqlPool>,
+    user: CurrentUser,
     id: Result<Path<String>, PathRejection>,
 ) -> Result<Json<Value>, ApiError> {
+    user.require_manage_reports()?;
     let id = path_id(id)?;
     let _ = fetch_report(&pool, id).await?;
     let result = sqlx::query("DELETE FROM player_reports WHERE id = ?")
@@ -1365,6 +1645,126 @@ pub async fn delete_report(
         .map_err(internal)?;
     Ok(Json(json!({ "deleted": result.rows_affected() })))
 }
+
+/* ----------------------------------------------------------- Administration */
+
+pub async fn list_admin_users(
+    State(pool): State<MySqlPool>,
+    user: CurrentUser,
+) -> Result<Json<Value>, ApiError> {
+    user.require_admin()?;
+    let users = sqlx::query_as::<_, AdminUser>(
+        "SELECT id, username, email, role, is_locked,
+                CAST(DATE_FORMAT(locked_until, '%Y-%m-%dT%H:%i:%sZ') AS CHAR) AS locked_until,
+                locked_reason,
+                CAST(DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS CHAR) AS created_at
+         FROM users ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(internal)?;
+    Ok(Json(json!(users)))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateUserDto {
+    role: Option<String>,
+    is_locked: Option<bool>,
+    /// RFC 3339; nur relevant, wenn `is_locked = true`. Fehlt der Wert, gilt
+    /// die Sperre unbefristet.
+    locked_until: Option<String>,
+    locked_reason: Option<String>,
+}
+
+pub async fn update_admin_user(
+    State(pool): State<MySqlPool>,
+    user: CurrentUser,
+    id: Result<Path<String>, PathRejection>,
+    payload: Result<Json<UpdateUserDto>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    user.require_admin()?;
+    let id = path_id(id)?;
+    let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+
+    let target = fetch_admin_user(&pool, id).await?;
+
+    let role = dto.role.unwrap_or_else(|| target.role.clone());
+    if !matches!(role.as_str(), "admin" | "host" | "player") {
+        return bad(format!("unknown role '{role}'"));
+    }
+
+    let is_locked = dto.is_locked.unwrap_or(target.is_locked);
+    // Beim Entsperren werden Ablaufzeit und Grund immer mit entfernt; sonst
+    // verletzt `chk_users_lock_window` die Kombination.
+    let locked_until = if !is_locked {
+        None
+    } else if let Some(value) = dto.locked_until.as_deref() {
+        Some(parse_locked_until(value)?)
+    } else if target.is_locked {
+        target
+            .locked_until
+            .as_deref()
+            .map(parse_locked_until)
+            .transpose()?
+    } else {
+        None
+    };
+    let locked_reason = if is_locked {
+        dto.locked_reason.or(target.locked_reason.clone())
+    } else {
+        None
+    };
+
+    // Admins duerfen sich nicht selbst aussperren oder degradieren - sonst
+    // gibt es am Ende niemanden mehr, der Rollen vergeben kann.
+    if id == user.id {
+        if role != "admin" {
+            return bad("admins cannot remove their own admin role".into());
+        }
+        if is_locked {
+            return bad("admins cannot lock their own account".into());
+        }
+    }
+
+    sqlx::query(
+        "UPDATE users
+         SET role = ?, is_locked = ?, locked_until = ?, locked_reason = ?
+         WHERE id = ?",
+    )
+    .bind(&role)
+    .bind(is_locked)
+    .bind(locked_until)
+    .bind(&locked_reason)
+    .bind(id)
+    .execute(&pool)
+    .await
+    .map_err(internal)?;
+
+    Ok(Json(json!(fetch_admin_user(&pool, id).await?)))
+}
+
+fn parse_locked_until(value: &str) -> Result<NaiveDateTime, ApiError> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .map(|datetime| datetime.naive_utc())
+        .map_err(|_| ApiError::BadRequest("locked_until must be an RFC 3339 timestamp".into()))
+}
+
+async fn fetch_admin_user(pool: &MySqlPool, id: u64) -> Result<AdminUser, ApiError> {
+    sqlx::query_as::<_, AdminUser>(
+        "SELECT id, username, email, role, is_locked,
+                CAST(DATE_FORMAT(locked_until, '%Y-%m-%dT%H:%i:%sZ') AS CHAR) AS locked_until,
+                locked_reason,
+                CAST(DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS CHAR) AS created_at
+         FROM users WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(internal)?
+    .ok_or_else(|| ApiError::NotFound(format!("no user with id {id}")))
+}
+
+/* --------------------------------------------------------------- Meldungen */
 
 async fn fetch_report(pool: &MySqlPool, id: u64) -> Result<PlayerReport, ApiError> {
     sqlx::query_as::<_, PlayerReport>(

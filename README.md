@@ -28,10 +28,20 @@ Nach dem Klonen genuegt dieser eine Befehl:
 docker compose up -d --build
 ```
 
-Danach laeuft die Oberflaeche auf **http://localhost:5173**. Im Browser solltest
-du den Katalog mit „Vier Gewinnt“ sehen, unter „Sitzungen“ eine Beispielpartie
-und oben vier Personen zum Auswaehlen - das kommt alles aus den Migrationen,
-nicht aus dem Browser.
+Danach laeuft die Oberflaeche auf **http://localhost:5173**. Im Browser
+erscheint zuerst die Anmeldung. Die Beispielkonten aus den Migrationen haben
+alle das Passwort `password`:
+
+| Konto      | Rolle  | Darf                                                    |
+| ---------- | ------ | ------------------------------------------------------- |
+| `HostUser` | host   | spielen, eigene Sitzungen anlegen und steuern            |
+| `Alice`    | player | nur spielen                                              |
+| `Bob`      | player | nur spielen                                              |
+| `Mara`     | admin  | alles: Sitzungen, Meldungen, Benutzer, Beispieldaten     |
+
+Nach dem Login siehst du den Katalog mit „Vier Gewinnt“, unter „Sitzungen“ (als
+Host/Admin) eine Beispielpartie. Neue Konten ueber „Konto erstellen“ sind
+immer `player`; Rollen vergibt nur die Administration.
 
 | Adresse                          | Inhalt                                      |
 | -------------------------------- | ------------------------------------------- |
@@ -104,10 +114,10 @@ der naechste Start sie samt Migrationen neu an.
   haeufigste Grund ist ein belegter Port (siehe oben).
 * **Die Oberflaeche meldet „Das Backend ist nicht erreichbar“.** Dann laeuft
   `backend` nicht: `docker compose ps` und `docker compose logs backend`.
-* **„Es laeuft bereits eine Partie“.** Es ist noch eine offene Sitzung da. Unter
-  `/sessions` anzeigen und dort beenden, oder `docker compose exec db mysql
-  -uboardgames -pboardgames boardgames -e "DELETE FROM game_sessions WHERE
-  outcome IS NULL;"`.
+* **„Es laeuft bereits eine Partie“.** Es ist noch eine offene Sitzung da. Als
+  Host oder Admin unter `/sessions` anzeigen und dort beenden, oder `docker
+  compose exec db mysql -uboardgames -pboardgames boardgames -e "DELETE FROM
+  game_sessions WHERE outcome IS NULL;"`.
 * **Neu aufsetzen.** `docker compose down -v && docker compose up -d` loescht
   die Datenbank und legt sie mit den Migrationen neu an.
 
@@ -218,25 +228,65 @@ nichts an. Das ist Absicht: die Daten liegen in MySQL, nicht im localStorage.
 Ein stiller Rueckfall auf den Browser wuerde Datensaetze erzeugen, die nur auf
 einem Rechner existieren und beim naechsten Start verschwunden waeren.
 
-Die einzige lokale Zustandsangabe bleibt, wer gerade als wer eingeloggt ist
-(`usePersistentState`) - da gibt es noch keinen Login.
+Der Browser haelt nur das Bearer-Token und das oeffentliche Profil der
+angemeldeten Person (`frontend/src/lib/auth.ts`); alle Daten liegen in MySQL.
+Beim naechsten Laden prueft der Server das Token und die Rechte erneut.
+
+## Rollen und Rechte
+
+Die Rollen stehen in `users.role`, die daraus abgeleiteten Rechte in
+`v_user_permissions` (Migration `20261104000000_role_permissions.sql`). Das
+Backend liest die Rechte bei **jeder** Anfrage neu aus der Datenbank; Aenderungen
+an Rolle oder Sperre wirken deshalb ohne neues Token. Zusaetzlich prueft jede
+schreibende Route die Rolle serverseitig - die Oberflaeche blendet nur aus, was
+ohnehin verboten waere.
+
+| Aktion                                   | player | host             | admin            |
+| ---------------------------------------- | ------ | ---------------- | ---------------- |
+| Spielen (auch `/play`)                   | ja     | ja               | ja               |
+| Katalog, Spielregeln, eigenes Profil     | ja     | ja               | ja               |
+| Sitzungen anlegen                        | nein   | eigene           | alle             |
+| Pause/Fortsetzen/Beenden                 | nein   | eigene Sitzung   | alle Sitzungen   |
+| Aufgeben                                 | eigener Platz | eigener Platz | eigener/erzwungen |
+| Sitzungsuebersicht `/sessions`           | nein   | ja               | ja               |
+| Meldungen `/reports`                     | nein   | nein             | ja               |
+| Benutzerverwaltung `/api/admin/users`    | nein   | nein             | ja               |
+| Beispieldaten loeschen                   | nein   | nein             | ja               |
+
+Ein **gesperrtes** Konto darf noch lesen, aber nichts schreiben: die
+Schreibrouten antworten mit `403`. Selbstregistrierung legt immer `player` an.
 
 ## API
+
+Alle Routen ausser `GET /api/health`, `POST /api/login` und `POST /api/register`
+verlangen einen Bearer-Token:
+
+```
+Authorization: Bearer <token>
+```
+
+Login und Registrierung liefern den Token, seine Ablaufzeit (7 Tage) und die
+Rechte aus `v_user_permissions`. Gespeichert wird nur der SHA-256-Hash in
+`auth_tokens`; `POST /api/logout` macht den Token ungueltig. `GET /api/me`
+liefert die angemeldete Person samt Rechten nach einem Reload.
 
 Alle Routen werden von `frontend/src/lib/api.ts` benutzt, das ist der einzige
 Datenzugriff der Oberflaeche:
 
 | Methode | Route                                   | Zweck                                  |
 | ------- | --------------------------------------- | -------------------------------------- |
-| GET     | `/api/health`                           | DB-Verbindung pruefen                  |
-| GET     | `/api/users`                            | Beispielpersonen aus `users`           |
+| GET     | `/api/health`                           | DB-Verbindung pruefen (ohne Token)     |
+| GET     | `/api/users`                            | aktive Personen aus `users`            |
 | GET     | `/api/users/{id}`                       | oeffentliches Profil einer Person      |
-| POST    | `/api/login`                            | Anmeldung mit Benutzername/Passwort    |
-| POST    | `/api/register`                         | neues Konto anlegen                    |
-| POST    | `/api/logout`                           | Abmeldung                              |
+| POST    | `/api/login`                            | Anmeldung, liefert Bearer-Token        |
+| POST    | `/api/register`                         | neues Konto (immer `player`)           |
+| POST    | `/api/logout`                           | Token ungueltig machen                 |
+| GET     | `/api/me`                               | angemeldete Person und Rechte          |
+| GET     | `/api/admin/users`                      | Benutzerverwaltung (nur Admin)         |
+| PATCH   | `/api/admin/users/{id}`                 | Rolle/Sperre aendern (nur Admin)       |
 | GET     | `/api/games`                            | Spieltypen aus `game_types`            |
 | GET     | `/api/sessions`                         | gehostete Sitzungen, neueste zuerst    |
-| POST    | `/api/sessions`                         | Sitzung anlegen, zwei Plaetze belegen  |
+| POST    | `/api/sessions`                         | Sitzung anlegen (Host/Admin)           |
 | GET     | `/api/sessions/{id}`                    | eine Sitzung                           |
 | POST    | `/api/sessions/{id}/pause`              | Pause in `metadata_json` vermerken     |
 | POST    | `/api/sessions/{id}/resume`             | Pause abschliessen, Pausenzeit addieren |
@@ -245,12 +295,12 @@ Datenzugriff der Oberflaeche:
 | POST    | `/api/connect-four/games`               | Partie speichern, Sitzung schliessen   |
 | GET     | `/api/connect-four/games`               | alle Verlaeufe                         |
 | GET     | `/api/connect-four/games/{session_id}`  | eine Partie                            |
-| DELETE  | `/api/demo-data`                        | Beispielpartie loeschen                |
-| GET     | `/api/reports`                          | Spieler-Meldungen (Filter: status, reported_user_id, reporter_id) |
-| POST    | `/api/reports`                          | Meldung anlegen                        |
-| GET     | `/api/reports/{id}`                     | eine Meldung                           |
-| PATCH   | `/api/reports/{id}`                     | Meldung pruefen / Status aendern        |
-| DELETE  | `/api/reports/{id}`                     | Meldung loeschen                       |
+| DELETE  | `/api/demo-data`                        | Beispielpartie loeschen (nur Admin)    |
+| GET     | `/api/reports`                          | Spieler-Meldungen (nur Admin; Filter: status, reported_user_id, reporter_id) |
+| POST    | `/api/reports`                          | Meldung anlegen (nur Admin)            |
+| GET     | `/api/reports/{id}`                     | eine Meldung (nur Admin)               |
+| PATCH   | `/api/reports/{id}`                     | Meldung pruefen / Status aendern (nur Admin) |
+| DELETE  | `/api/reports/{id}`                     | Meldung loeschen (nur Admin)           |
 
 Die Zustaende ohne eigene Spalte liegen in `game_sessions.metadata_json`:
 `paused_at`, `paused_ms`, `abort_reason`, `surrendered_by`, `winner_side` sowie
@@ -294,9 +344,13 @@ Rust-Abgleich siehe die Kommentare in
 
 ## Bekannte Grenzen
 
-* **Login.** Die vier Beispielpersonen aus `backend/migrations/20251007000000_seed_users.sql`
-  haben das Passwort `password`; neue Konten koennen ueber `/login` angelegt werden.
-  Die Rechtepruefung aus `v_user_permissions` kann darauf aufbauen.
+* **Anmeldung und Rollen.** Die vier Beispielpersonen aus
+  `backend/migrations/20251007000000_seed_users.sql` haben das Passwort
+  `password`; neue Konten entstehen ueber `/login` als `player`. Rollen und
+  Sperren vergibt nur die Administration ueber `/api/admin/users`.
+* **Token im Browser.** Der Bearer-Token liegt im `localStorage`. Das ist ohne
+  TLS im Container nur fuer die lokale Entwicklung gedacht; fuer eine
+  oeffentliche Instanz gehoert ein Reverse Proxy mit HTTPS davor.
 * **Eine offene Sitzung zur Zeit.** `POST /api/sessions` lehnt ab, wenn bereits
   eine laeuft (`outcome IS NULL`). Das entspricht der Regel der Oberflaeche,
   gilt aber fuer alle zusammen und nicht je Person.

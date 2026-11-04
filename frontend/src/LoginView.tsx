@@ -1,12 +1,10 @@
 import { useState } from "react";
 
 import { useNavigate } from "./router";
-import { usePersistentState } from "./hooks/usePersistentState";
 import { api } from "./lib/api";
 
 export const LoginView: React.FC = () => {
   const navigate = useNavigate();
-  const [, setCurrentUserId] = usePersistentState("currentUserId", 0);
   const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -19,11 +17,12 @@ export const LoginView: React.FC = () => {
     setError(null);
     setBusy(true);
     try {
-      const user =
-        mode === "login"
-          ? await api.login(username.trim(), password)
-          : await api.register({ username: username.trim(), password, email: email.trim() || null });
-      setCurrentUserId(user.id);
+      if (mode === "login") {
+        await api.login(username.trim(), password);
+      } else {
+        await api.register({ username: username.trim(), password, email: email.trim() || null });
+      }
+      // `api.login`/`api.register` legen Token und Profil im Auth-Store ab.
       navigate("/");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Anmeldung fehlgeschlagen.");

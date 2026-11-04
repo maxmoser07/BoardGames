@@ -9,8 +9,10 @@ import { useLiveData } from "./hooks/useLiveData";
 import { useNow } from "./hooks/useNow";
 import { usePausedTime } from "./hooks/usePausedTime";
 import { ApiError, api } from "./lib/api";
+import { useAuth } from "./lib/auth";
 import { formatDateTime, formatDuration } from "./lib/format";
 import { installGameResultEndpoint } from "./lib/gameResultEndpoint";
+import { canManageSession, canOpenSession, canSurrenderSeat } from "./lib/permissions";
 import { useNavigate } from "./router";
 import {
   SIDE_LABEL,
@@ -23,6 +25,7 @@ import {
   type RecordedGame,
   type Side,
   type User,
+  type UserRole,
 } from "./types";
 
 interface Props {
@@ -50,6 +53,7 @@ export const GameSessionWindow: React.FC<Props> = ({ sessionId }) => {
   const users = useLiveData(() => api.getUsers());
   const session = useLiveData(() => api.getSession(sessionId));
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const userMap = new Map((users.data ?? []).map((user) => [user.id, user]));
   const loaded = session.data ?? null;
@@ -97,8 +101,26 @@ export const GameSessionWindow: React.FC<Props> = ({ sessionId }) => {
             Sitzung <code>{sessionId}</code> gibt es nicht (mehr). Vielleicht wurde sie
             entfernt, oder die Adresse stammt aus einem anderen System.
           </Notice>
+        ) : !canOpenSession(user?.role, user?.id, loaded) ? (
+          <Notice
+            tone="warn"
+            title="Kein Zugriff auf diese Sitzung"
+            action={
+              <button type="button" className="btn btn--sm btn--primary" onClick={() => navigate("/")}>
+                Zum Katalog
+              </button>
+            }
+          >
+            Das Brett gehört zu einem anderen Konto. Nur die beiden Mitwirkenden, der Host und Admins
+            dürfen es öffnen.
+          </Notice>
         ) : (
-          <SessionBody session={loaded} users={userMap} />
+          <SessionBody
+            session={loaded}
+            users={userMap}
+            role={user?.role}
+            userId={user?.id}
+          />
         )}
       </main>
     </div>
@@ -108,6 +130,8 @@ export const GameSessionWindow: React.FC<Props> = ({ sessionId }) => {
 interface SessionBodyProps {
   session: GameSession;
   users: Map<number, User>;
+  role: UserRole | undefined;
+  userId: number | undefined;
 }
 
 /**
@@ -115,11 +139,16 @@ interface SessionBodyProps {
  * `ConnectFour` (und damit der eingefrorene `useConnectFour`) das Spiel; sobald
  * die Sitzung einen Ausgang hat, zeigt das Fenster das Endergebnis.
  */
-function SessionBody({ session, users }: SessionBodyProps) {
+function SessionBody({ session, users, role, userId }: SessionBodyProps) {
   const games = useLiveData(() => api.listGames());
   const navigate = useNavigate();
   const [feedback, setFeedback] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const canManage = canManageSession(role, userId, session);
+  const canSurrender = (["red", "yellow"] as const).filter((side) =>
+    canSurrenderSeat(role, userId, session.players[side]),
+  );
 
   const open = session.outcome === null;
   const paused = session.pausedAt !== null;
@@ -179,6 +208,7 @@ function SessionBody({ session, users }: SessionBodyProps) {
   };
 
   const handleRematch = () => {
+    if (!canManage) return;
     void run(async () => {
       const next = await api.createSession({
         gameType: session.gameType,
@@ -256,37 +286,43 @@ function SessionBody({ session, users }: SessionBodyProps) {
             ) : null}
           </div>
 
-          <div className="window__controls">
-            {paused ? (
-              <button type="button" className="btn btn--primary btn--sm" onClick={handleResume} disabled={busy}>
-                <Play aria-hidden="true" size={15} />
-                Fortsetzen
-              </button>
-            ) : (
-              <button type="button" className="btn btn--ghost btn--sm" onClick={handlePause} disabled={busy}>
-                <Pause aria-hidden="true" size={15} />
-                Pausieren
-              </button>
-            )}
+          {canManage || canSurrender.length > 0 ? (
+            <div className="window__controls">
+              {canManage ? (
+                <>
+                  {paused ? (
+                    <button type="button" className="btn btn--primary btn--sm" onClick={handleResume} disabled={busy}>
+                      <Play aria-hidden="true" size={15} />
+                      Fortsetzen
+                    </button>
+                  ) : (
+                    <button type="button" className="btn btn--ghost btn--sm" onClick={handlePause} disabled={busy}>
+                      <Pause aria-hidden="true" size={15} />
+                      Pausieren
+                    </button>
+                  )}
 
-            <button type="button" className="btn btn--danger-ghost btn--sm" onClick={handleAbort} disabled={busy}>
-              <Ban aria-hidden="true" size={15} />
-              Sitzung beenden
-            </button>
+                  <button type="button" className="btn btn--danger-ghost btn--sm" onClick={handleAbort} disabled={busy}>
+                    <Ban aria-hidden="true" size={15} />
+                    Sitzung beenden
+                  </button>
+                </>
+              ) : null}
 
-            {(["red", "yellow"] as const).map((side) => (
-              <button
-                key={side}
-                type="button"
-                className="btn btn--ghost btn--sm"
-                onClick={() => handleSurrender(side)}
-                disabled={busy}
-              >
-                <Flag aria-hidden="true" size={15} />
-                {SIDE_LABEL[side]} gibt auf
-              </button>
-            ))}
-          </div>
+              {canSurrender.map((side) => (
+                <button
+                  key={side}
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  onClick={() => handleSurrender(side)}
+                  disabled={busy}
+                >
+                  <Flag aria-hidden="true" size={15} />
+                  {SIDE_LABEL[side]} gibt auf
+                </button>
+              ))}
+            </div>
+          ) : null}
         </>
       ) : (
         <ResultPanel
@@ -295,6 +331,7 @@ function SessionBody({ session, users }: SessionBodyProps) {
           users={users}
           elapsed={elapsed}
           busy={busy}
+          canRematch={canManage}
           onRematch={handleRematch}
           onBack={() => navigate("/")}
         />
@@ -309,11 +346,12 @@ interface ResultPanelProps {
   users: Map<number, User>;
   elapsed: number;
   busy: boolean;
+  canRematch: boolean;
   onRematch: () => void;
   onBack: () => void;
 }
 
-function ResultPanel({ session, game, users, elapsed, busy, onRematch, onBack }: ResultPanelProps) {
+function ResultPanel({ session, game, users, elapsed, busy, canRematch, onRematch, onBack }: ResultPanelProps) {
   return (
     <section className="result" aria-label="Ergebnis">
       <p className="result__headline">
@@ -351,10 +389,12 @@ function ResultPanel({ session, game, users, elapsed, busy, onRematch, onBack }:
       </div>
 
       <div className="result__actions">
-        <button type="button" className="btn btn--primary btn--sm" onClick={onRematch} disabled={busy}>
-          <RotateCcw aria-hidden="true" size={15} />
-          Neue Partie
-        </button>
+        {canRematch ? (
+          <button type="button" className="btn btn--primary btn--sm" onClick={onRematch} disabled={busy}>
+            <RotateCcw aria-hidden="true" size={15} />
+            Neue Partie
+          </button>
+        ) : null}
         <button type="button" className="btn btn--ghost btn--sm" onClick={onBack}>
           <LayoutGrid aria-hidden="true" size={15} />
           Zur Übersicht

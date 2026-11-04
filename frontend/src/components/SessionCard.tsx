@@ -20,6 +20,8 @@ interface SessionCardProps {
   session: GameSession;
   game: RecordedGame | undefined;
   users: Map<number, User>;
+  canOpen: boolean;
+  canManage: boolean;
   onOpen: (session: GameSession) => void;
   onAbort: (session: GameSession) => void;
   onPause: (session: GameSession) => void;
@@ -50,7 +52,17 @@ function Seat({ side, userId, users }: { side: Side; userId: number; users: Map<
   );
 }
 
-export function SessionCard({ session, game, users, onOpen, onAbort, onPause, onResume }: SessionCardProps) {
+export function SessionCard({
+  session,
+  game,
+  users,
+  canOpen,
+  canManage,
+  onOpen,
+  onAbort,
+  onPause,
+  onResume,
+}: SessionCardProps) {
   const status = sessionStatus(session);
   const running = status === "running";
   const paused = status === "paused";
@@ -129,12 +141,14 @@ export function SessionCard({ session, game, users, onOpen, onAbort, onPause, on
           {paused ? " · pausiert" : ""}
         </p>
         <div className="session__actions">
-          {open ? (
+          {canOpen ? (
+            <button type="button" className="btn btn--primary btn--sm" onClick={() => onOpen(session)}>
+              <Play aria-hidden="true" size={15} />
+              {open ? "Spielfeld öffnen" : "Ergebnis öffnen"}
+            </button>
+          ) : null}
+          {open && canManage ? (
             <>
-              <button type="button" className="btn btn--primary btn--sm" onClick={() => onOpen(session)}>
-                <Play aria-hidden="true" size={15} />
-                Spielfeld öffnen
-              </button>
               {paused ? (
                 <button type="button" className="btn btn--ghost btn--sm" onClick={() => onResume(session)}>
                   <Play aria-hidden="true" size={15} />

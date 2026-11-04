@@ -6,8 +6,9 @@ import { GameCard } from "./components/GameCard";
 import { SessionCard } from "./components/SessionCard";
 import { EmptyState, Notice, Skeleton } from "./components/ui";
 import { useLiveData } from "./hooks/useLiveData";
-import { usePersistentState } from "./hooks/usePersistentState";
 import { api } from "./lib/api";
+import { useAuth } from "./lib/auth";
+import { canManageSession, canOpenSession, isAdmin } from "./lib/permissions";
 import { useNavigate } from "./router";
 import type { GameSession } from "./types";
 
@@ -17,12 +18,12 @@ import type { GameSession } from "./types";
  */
 const SessionsView: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const users = useLiveData(() => api.getUsers());
   const sessions = useLiveData(() => api.listSessions());
   const games = useLiveData(() => api.listGames());
 
-  const [currentUserId, setCurrentUserId] = usePersistentState("currentUserId", 1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,11 +39,15 @@ const SessionsView: React.FC = () => {
 
   const hasDemo = allSessions.some((session) => session.demo) || allGames.some((game) => game.demo);
   const loadError = users.error ?? sessions.error ?? games.error;
+  const mayManageUsers = isAdmin(user?.role);
 
   async function handleClearDemo(): Promise<void> {
     setBusy(true);
     try {
       await api.clearDemoData();
+      setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Beispieldaten konnten nicht gelöscht werden.");
     } finally {
       setBusy(false);
     }
@@ -77,12 +82,7 @@ const SessionsView: React.FC = () => {
   };
 
   return (
-    <AppShell
-      users={userList}
-      currentUserId={currentUserId}
-      onCurrentUserChange={setCurrentUserId}
-      active="sessions"
-    >
+    <AppShell active="sessions">
       {loadError ? (
         <Notice tone="danger" title="Daten konnten nicht geladen werden">
           {loadError}
@@ -154,6 +154,8 @@ const SessionsView: React.FC = () => {
                 session={session}
                 game={session.gameId ? gameMap.get(session.gameId) : undefined}
                 users={userMap}
+                canOpen={canOpenSession(user?.role, user?.id, session)}
+                canManage={canManageSession(user?.role, user?.id, session)}
                 {...controls}
               />
             ))}
@@ -185,6 +187,8 @@ const SessionsView: React.FC = () => {
                   session={session}
                   game={session.gameId ? gameMap.get(session.gameId) : undefined}
                   users={userMap}
+                  canOpen={canOpenSession(user?.role, user?.id, session)}
+                  canManage={canManageSession(user?.role, user?.id, session)}
                   {...controls}
                 />
               ))}
@@ -211,7 +215,7 @@ const SessionsView: React.FC = () => {
               </h2>
               <p className="panel__subtitle">jede abgeschlossene Partie</p>
             </div>
-            {hasDemo ? (
+            {hasDemo && mayManageUsers ? (
               <button
                 type="button"
                 className="btn btn--ghost btn--sm panel__head-action"

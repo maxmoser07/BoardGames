@@ -4,8 +4,9 @@ import { AlertTriangle, Flag, ShieldCheck, Trash2 } from "lucide-react";
 import { AppShell } from "./components/AppShell";
 import { EmptyState, Notice, Skeleton } from "./components/ui";
 import { useLiveData } from "./hooks/useLiveData";
-import { usePersistentState } from "./hooks/usePersistentState";
 import { api } from "./lib/api";
+import { useAuth } from "./lib/auth";
+import { isAdmin } from "./lib/permissions";
 import type { PlayerReport, ReportStatus, User } from "./types";
 
 const STATUS_LABEL: Record<ReportStatus, string> = {
@@ -16,10 +17,10 @@ const STATUS_LABEL: Record<ReportStatus, string> = {
 };
 
 const ReportsView: React.FC = () => {
+  const { user } = useAuth();
   const users = useLiveData(() => api.getUsers());
   const reports = useLiveData(() => api.getReports());
 
-  const [currentUserId, setCurrentUserId] = usePersistentState("currentUserId", 1);
   const [statusFilter, setStatusFilter] = useState<ReportStatus | "all">("all");
   const [reportedUserId, setReportedUserId] = useState<number | "">("");
   const [reason, setReason] = useState("");
@@ -29,8 +30,7 @@ const ReportsView: React.FC = () => {
 
   const userList = users.data ?? [];
   const userMap = new Map(userList.map((user) => [user.id, user]));
-  const currentUser = userList.find((user) => user.id === currentUserId) ?? userList[0];
-  const isAdmin = currentUser?.role === "admin";
+  const canManage = isAdmin(user?.role);
 
   const allReports = reports.data ?? [];
   const visibleReports =
@@ -49,7 +49,7 @@ const ReportsView: React.FC = () => {
   }
 
   async function handleStatus(report: PlayerReport, status: ReportStatus): Promise<void> {
-    await run(() => api.updateReport(report.id, { status, reviewedBy: currentUserId }));
+    await run(() => api.updateReport(report.id, { status }));
   }
 
   async function handleDelete(report: PlayerReport): Promise<void> {
@@ -62,7 +62,6 @@ const ReportsView: React.FC = () => {
     if (reportedUserId === "" || reason.trim() === "") return;
     await run(() =>
       api.createReport({
-        reporterId: currentUserId,
         reportedUserId: Number(reportedUserId),
         reason: reason.trim(),
         details: details.trim() || null,
@@ -76,7 +75,7 @@ const ReportsView: React.FC = () => {
   const loadError = users.error ?? reports.error;
 
   return (
-    <AppShell users={userList} currentUserId={currentUserId} onCurrentUserChange={setCurrentUserId} active="reports">
+    <AppShell active="reports">
       {loadError ? (
         <Notice tone="danger" title="Daten konnten nicht geladen werden">
           {loadError}
@@ -101,13 +100,13 @@ const ReportsView: React.FC = () => {
         </div>
       </section>
 
-      {!isAdmin ? (
+      {!canManage ? (
         <Notice tone="warn" title="Nur für Admins">
           Diese Ansicht ist für Administratoren reserviert.
         </Notice>
       ) : null}
 
-      {isAdmin ? (
+      {canManage ? (
         <section className="card panel" aria-labelledby="panel-create">
           <header className="panel__head">
             <h2 className="panel__title" id="panel-create">
@@ -195,7 +194,7 @@ const ReportsView: React.FC = () => {
                     <button
                       type="button"
                       className="btn btn--sm btn--ghost"
-                      disabled={busy || !isAdmin}
+                      disabled={busy || !canManage}
                       onClick={() => void handleStatus(report, "reviewed")}
                     >
                       Prüfen
@@ -203,7 +202,7 @@ const ReportsView: React.FC = () => {
                     <button
                       type="button"
                       className="btn btn--sm btn--primary"
-                      disabled={busy || !isAdmin}
+                      disabled={busy || !canManage}
                       onClick={() => void handleStatus(report, "resolved")}
                     >
                       Erledigen
@@ -211,7 +210,7 @@ const ReportsView: React.FC = () => {
                     <button
                       type="button"
                       className="btn btn--sm btn--ghost"
-                      disabled={busy || !isAdmin}
+                      disabled={busy || !canManage}
                       onClick={() => void handleStatus(report, "dismissed")}
                     >
                       Verwerfen
@@ -219,7 +218,7 @@ const ReportsView: React.FC = () => {
                     <button
                       type="button"
                       className="btn btn--sm btn--danger"
-                      disabled={busy || !isAdmin}
+                      disabled={busy || !canManage}
                       onClick={() => void handleDelete(report)}
                     >
                       <Trash2 aria-hidden="true" size={14} />

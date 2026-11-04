@@ -1,34 +1,46 @@
 import type { ReactNode } from "react";
-import { CircleUser, Flag, History, LayoutGrid, ShieldCheck } from "lucide-react";
+import { CircleUser, Flag, History, LayoutGrid, Play, ShieldCheck } from "lucide-react";
 
-import { ROLE_LABEL } from "../lib/format";
-import { useNavigate } from "../router";
 import { api } from "../lib/api";
-import type { User } from "../types";
+import { signOut, useAuth } from "../lib/auth";
+import { ROLE_LABEL } from "../lib/format";
+import { canManageReports, canViewSessions } from "../lib/permissions";
+import { useNavigate } from "../router";
+import type { UserRole } from "../types";
 import { Logo } from "./Logo";
 
-export type ShellSection = "catalog" | "sessions" | "reports" | "profile";
+export type ShellSection = "catalog" | "play" | "sessions" | "reports" | "profile";
 
 interface AppShellProps {
-  users: User[];
-  currentUserId: number;
-  onCurrentUserChange: (id: number) => void;
   /** Welcher Navigationspunkt aktiv ist. */
   active?: ShellSection;
   children: ReactNode;
 }
 
 const NAV = [
-  { path: "/", label: "Spiele", icon: LayoutGrid, match: "catalog" },
-  { path: "/sessions", label: "Sitzungen", icon: History, match: "sessions" },
-  { path: "/reports", label: "Meldungen", icon: Flag, match: "reports" },
-  { path: "/profile", label: "Profil", icon: CircleUser, match: "profile" },
+  { path: "/", label: "Spiele", icon: LayoutGrid, match: "catalog", visible: () => true },
+  { path: "/play", label: "Direkt spielen", icon: Play, match: "play", visible: () => true },
+  {
+    path: "/sessions",
+    label: "Sitzungen",
+    icon: History,
+    match: "sessions",
+    visible: (role: UserRole) => canViewSessions(role),
+  },
+  {
+    path: "/reports",
+    label: "Meldungen",
+    icon: Flag,
+    match: "reports",
+    visible: (role: UserRole) => canManageReports(role),
+  },
+  { path: "/profile", label: "Profil", icon: CircleUser, match: "profile", visible: () => true },
 ] as const;
 
-/** Rahmen des Katalogs und der Sitzungsübersicht. */
-export function AppShell({ users, currentUserId, onCurrentUserChange, active, children }: AppShellProps) {
+/** Rahmen des Katalogs, der Sitzungen und der Meldungen. */
+export function AppShell({ active, children }: AppShellProps) {
   const navigate = useNavigate();
-  const currentUser = currentUserId === 0 ? undefined : users.find((user) => user.id === currentUserId);
+  const { user } = useAuth();
 
   return (
     <div className="shell">
@@ -42,28 +54,30 @@ export function AppShell({ users, currentUserId, onCurrentUserChange, active, ch
         </div>
 
         <nav className="shell__nav" aria-label="Hauptnavigation">
-          {NAV.map(({ path, label, icon: Icon, match }) => {
-            const isActive = active === match;
-            return (
-              <button
-                key={path}
-                type="button"
-                className={`shell__nav-link${isActive ? " is-active" : ""}`}
-                aria-current={isActive ? "page" : undefined}
-                onClick={() => navigate(path)}
-              >
-                <Icon aria-hidden="true" size={16} />
-                {label}
-              </button>
-            );
-          })}
+          {NAV.filter(({ visible }) => (user ? visible(user.role) : false)).map(
+            ({ path, label, icon: Icon, match }) => {
+              const isActive = active === match;
+              return (
+                <button
+                  key={path}
+                  type="button"
+                  className={`shell__nav-link${isActive ? " is-active" : ""}`}
+                  aria-current={isActive ? "page" : undefined}
+                  onClick={() => navigate(path)}
+                >
+                  <Icon aria-hidden="true" size={16} />
+                  {label}
+                </button>
+              );
+            },
+          )}
         </nav>
 
-        {currentUser ? (
+        {user ? (
           <div className="shell__user">
             <span className="shell__user-label">
               <ShieldCheck aria-hidden="true" size={14} />
-              {currentUser.username} · {ROLE_LABEL[currentUser.role]}
+              {user.username} · {ROLE_LABEL[user.role]}
             </span>
             <button
               type="button"
@@ -74,7 +88,7 @@ export function AppShell({ users, currentUserId, onCurrentUserChange, active, ch
                 } catch {
                   // Lokal abmelden reicht für die Oberfläche.
                 }
-                onCurrentUserChange(0);
+                signOut();
                 navigate("/login");
               }}
             >

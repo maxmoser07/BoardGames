@@ -2,12 +2,17 @@
  * Datenzugriff für die Oberfläche.
  *
  * Alles liegt im Rust-Backend (axum) in MySQL – Sitzungen, Verläufe und
- * Personen. Der Browser hält nichts davon mehr; im localStorage steht nur noch,
- * wer gerade als wer eingeloggt ist (`usePersistentState`).
+ * Personen. Der Browser hält nichts davon mehr; im localStorage stehen nur
+ * Bearer-Token und Profil der angemeldeten Person (siehe `auth.ts`).
+ *
+ * Alle Routen ausser `/health`, `/login` und `/register` verlangen den Token
+ * als `Authorization: Bearer <token>`. Die Rechte aus `v_user_permissions`
+ * prueft das Backend bei jeder Anfrage neu.
  *
  * Die Routen sind 1:1 die aus `backend/src/api.rs`:
  *
  *   GET    /api/health
+ *   POST   /api/login, /api/register, /api/logout
  *   GET    /api/users
  *   GET    /api/games
  *   GET    /api/sessions
@@ -19,7 +24,7 @@
  *   POST   /api/sessions/{id}/surrender        { userId }
  *   POST   /api/connect-four/games             { moves, winner, durationMs, sessionId }
  *   GET    /api/connect-four/games
- *   DELETE /api/demo-data
+ *   DELETE /api/demo-data                      (nur Admin)
  *
  * Das Backend antwortet in snake_case; die Abbildung auf die Typen aus
  * `../types` übernehmen die `to…`-Funktionen unten. Das ist die einzige Stelle,
@@ -43,6 +48,7 @@ import {
   type User,
   type UserRole,
 } from "../types";
+import { getToken, signIn, signOut } from "./auth";
 import { validateConnectFourResult } from "./connectFour";
 import { bySortOrder, GAME_TYPES } from "./gameTypes";
 
@@ -194,12 +200,14 @@ async function messageOf(response: Response): Promise<string> {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getToken();
   let response: Response;
   try {
     response = await fetch(`${BASE}${path}`, {
       ...init,
       headers: {
         Accept: "application/json",
+        ...(token === null ? {} : { Authorization: `Bearer ${token}` }),
         ...(init?.body === undefined ? {} : { "Content-Type": "application/json" }),
         ...init?.headers,
       },
@@ -211,6 +219,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(
       "Das Backend ist nicht erreichbar. Läuft es? (`docker compose ps`, sonst `docker compose up -d`)",
     );
+  }
+  if (response.status === 401) {
+    // Abgelaufenes oder zurueckgezogenes Token: lokal abmelden. Die Ansichten
+    // haengen an `useAuth` und zeigen danach sofort die Anmeldung.
+    if (path !== "/login" && path !== "/register") signOut();
+    throw new ApiError(await messageOf(response), response.status);
   }
   if (!response.ok) throw new ApiError(await messageOf(response), response.status);
   if (response.status === 204) return undefined as T;
@@ -310,23 +324,32 @@ async function getUser(id: number): Promise<User> {
 }
 
 async function login(username: string, password: string): Promise<User> {
-  const wire = await request<WireUser & { user?: WireUser }>("/login", {
+  const wire = await request<WireUser & { user?: WireUser; token?: string }>("/login", {
     method: "POST",
     body: JSON.stringify({ username, password }),
   });
-  return toUser(wire.user ?? wire);
+  const user = toUser(wire.user ?? wire);
+  if (typeof wire.token === "string" && wire.token !== "") signIn(user, wire.token);
+  return user;
 }
 
 async function register(input: { username: string; password: string; email?: string | null }): Promise<User> {
-  const wire = await request<WireUser & { user?: WireUser }>("/register", {
+  const wire = await request<WireUser & { user?: WireUser; token?: string }>("/register", {
     method: "POST",
     body: JSON.stringify({ username: input.username, password: input.password, email: input.email ?? null }),
   });
-  return toUser(wire.user ?? wire);
+  const user = toUser(wire.user ?? wire);
+  if (typeof wire.token === "string" && wire.token !== "") signIn(user, wire.token);
+  return user;
 }
 
 async function logout(): Promise<void> {
-  await request("/logout", { method: "POST" });
+  try {
+    await request("/logout", { method: "POST" });
+  } finally {
+    // Auch ohne erreichbares Backend lokal abmelden.
+    signOut();
+  }
 }
 
 /**

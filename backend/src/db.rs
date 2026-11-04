@@ -21,14 +21,26 @@ pub struct UserProfile {
     pub created_at: String,
 }
 
+/// Zeile aus `users` fuer die Administration - inklusive Sperre.
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct AdminUser {
+    pub id: u64,
+    pub username: String,
+    pub email: String,
+    pub role: String,
+    pub is_locked: bool,
+    /// `2026-11-04T12:00:00Z`; `None` = keine Sperre oder unbefristet.
+    pub locked_until: Option<String>,
+    pub locked_reason: Option<String>,
+    pub created_at: String,
+}
+
 /// Zeile aus `users` fuer die Anmeldung, inklusive Passwort-Hash und Sperre.
 #[derive(Debug, sqlx::FromRow)]
 pub struct AuthUser {
     pub id: u64,
-    pub username: String,
     pub email: String,
     pub password_hash: String,
-    pub role: String,
     pub is_locked: bool,
     pub locked_until: Option<chrono::NaiveDateTime>,
 }

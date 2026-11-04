@@ -1,7 +1,8 @@
 # BoardGames – Website
 
-React-/Vite-Oberfläche für Connect-Four-Sitzungen: Sitzung anlegen, Brett in einem
-eigenen Fenster öffnen, Partien verwalten und Spielverläufe sammeln.
+React-/Vite-Oberfläche für Connect-Four-Sitzungen: anmelden, spielen, als Host
+Sitzungen anlegen, als Admin Meldungen und Benutzer verwalten. Die Rechte
+kommen aus derselben Datenbank wie im Backend (`v_user_permissions`).
 
 ```bash
 npm install
@@ -38,10 +39,13 @@ Repository-Root, siehe [README.md](../README.md).
 
 ```
 src/
-  App.tsx                  Wurzel: verteilt die Ansichten (router.ts)
+  App.tsx                  Wurzel: verteilt die Ansichten und prüft die Rolle (router.ts)
+  LoginView.tsx            Anmeldung und Registrierung
   Catalog.tsx              Spielekatalog unter /
-  GameSetup.tsx            Einstellungen unter /games/:name
-  SessionsView.tsx         Sitzungen und Verläufe unter /sessions
+  GameSetup.tsx            Einstellungen unter /games/:name; für player nur der Spielstart
+  SessionsView.tsx         Sitzungen und Verläufe unter /sessions (host/admin)
+  ReportsView.tsx          Meldungen unter /reports (admin)
+  ProfileView.tsx          eigenes Profil unter /profile
   GameSessionWindow.tsx    Spielfeld-Fenster unter /connectfour/:id
   PlayView.tsx             Partie ohne Sitzung unter /play
   router.ts                Pfadauflösung ohne Router-Bibliothek
@@ -52,8 +56,10 @@ src/
   index.css                Gestaltung der Oberfläche (Variablen + Komponenten)
   components/              Bausteine: Karten, Kacheln, Auswahl, Anzeigen, Rahmen
   hooks/                   useLiveData, useNow, usePausedTime, usePersistentState
-  lib/                     HTTP-Zugriff, Katalog, Validierung, Formatierung
+  lib/
     api.ts                 interface Api und httpApi – der einzige Datenzugriff
+    auth.ts                Bearer-Token, Profil und useAuth
+    permissions.ts         Rollenmatrix für Navigation und Bedienelemente
     gameResultEndpoint.ts  ergänzt Sitzungs-Id und Spielzeit beim POST des Hooks
 scripts/logic.test.ts      Tests für die reine Logik (npm test)
 ```
@@ -84,15 +90,35 @@ durchgängig ersetzt.
   [Datenhaltung](#datenhaltung)). Ohne diese Ergänzung entstünde zusätzlich zur
   Partie eine offene Sitzung.
 
+## Rollen und Rechte
+
+Die Oberfläche liest die Rolle aus dem angemeldeten Profil (`useAuth`) und
+blendet Wege aus, die für die Rolle nicht vorgesehen sind. Das ist nur die
+Bequemlichkeitsschicht: Jede schreibende Route prüft dieselben Regeln noch
+einmal im Backend (`backend/src/api.rs`).
+
+| Rolle  | Navigation                                      | Darf                                                        |
+| ------ | ----------------------------------------------- | ----------------------------------------------------------- |
+| player | Spiele, Direkt spielen, Profil                  | nur spielen; `/games/:name` zeigt keinen Sitzungs-Editor    |
+| host   | zusätzlich Sitzungen                            | eigene Sitzungen anlegen, pausieren, fortsetzen, beenden     |
+| admin  | zusätzlich Meldungen                            | alles, auch fremde Sitzungen, Benutzer und Beispieldaten     |
+
+Ein gesperrtes Konto darf lesen, aber nicht schreiben. Die Anmeldung liegt in
+`lib/auth.ts`: Login und Registrierung speichern Token und Profil, `api.ts`
+schickt `Authorization: Bearer …` mit und meldet bei `401` lokal ab.
+
 ## Routen
 
-| Pfad               | Ansicht                                                   |
-| ------------------ | --------------------------------------------------------- |
-| `/`                | Spielekatalog – eine Kachel je Spiel                       |
-| `/games/:name`     | Einstellungen des Spiels (Sitzung anlegen)                 |
-| `/sessions`        | Sitzungen und Spielverläufe über alle Spiele               |
-| `/play`            | Brett direkt im Tab, ohne Sitzung                           |
-| `/connectfour/:id` | Spielfeld-Fenster, wird per `window.open` als Pop-up geöffnet |
+| Pfad               | Ansicht                                                   | Zugriff                    |
+| ------------------ | --------------------------------------------------------- | -------------------------- |
+| `/login`           | Anmeldung / Registrierung                                  | ohne Anmeldung             |
+| `/`                | Spielekatalog – eine Kachel je Spiel                       | angemeldet                 |
+| `/games/:name`     | Einstellungen (host/admin) bzw. Spielstart (player)        | angemeldet                 |
+| `/sessions`        | Sitzungen und Spielverläufe über alle Spiele               | host/admin                 |
+| `/reports`         | Meldungen                                                  | admin                      |
+| `/profile`         | eigenes Profil                                             | angemeldet                 |
+| `/play`            | Brett direkt im Tab, ohne Sitzung                           | angemeldet                 |
+| `/connectfour/:id` | Spielfeld-Fenster, wird per `window.open` als Pop-up geöffnet | Mitwirkende, Host, Admin   |
 
 Für den Produktivbetrieb braucht der Server einen SPA-Fallback: unbekannte
 Pfade müssen `index.html` ausliefern. `npm run preview` macht das bereits;
@@ -103,7 +129,9 @@ Pfade müssen `index.html` ausliefern. `npm run preview` macht das bereits;
 Eine Sitzung kennt vier Zustände: `running`, `paused`, `finished`, `aborted`
 (`sessionStatus` in `types.ts`). Starten und Beenden liegen im Spielfeld-Fenster,
 Pausieren und Fortsetzen zusätzlich in der Sitzungsübersicht – auch wenn das
-Spielfeld gar nicht offen ist.
+Spielfeld gar nicht offen ist. Das darf nur der Host der Sitzung oder ein Admin;
+Mitwirkende dürfen ausschließlich den eigenen Platz aufgeben. Die Oberfläche
+blendet die übrigen Knöpfe aus, das Backend prüft es zusätzlich.
 
 Die Spieluhr läuft während einer Pause nicht: `playedMs` zieht `pausedMs`
 (abgeschlossene Pausen) und eine noch offene Pause von der verstrichenen Zeit ab.
@@ -123,6 +151,13 @@ sichtbar.
 `httpApi`: jeder Aufruf geht an das Rust-Backend und landet in MySQL. Sitzungen,
 Spielverläufe und Personen liegen also auf dem Server, nicht im Browser – das
 Pop-up mit dem Brett und das Dashboard lesen denselben Stand aus derselben Quelle.
+
+Bis auf `/health`, `/login` und `/register` verlangt jede Route einen
+Bearer-Token. `lib/auth.ts` speichert Token und Profil, `api.ts` hängt
+`Authorization: Bearer …` an jede Anfrage und meldet bei `401` lokal ab. Die
+Rechte selbst kommen aus `v_user_permissions` und werden vom Backend bei jeder
+Anfrage neu gelesen; die Oberfläche prüft nur dieselbe Rollenmatrix, um Wege
+auszublenden.
 
 Ohne Backend bekommt jede Ansicht einen Fehlertext und legt nichts an. Ein
 Rückfall auf `localStorage` wäre bequemer, erzeugte aber Datensätze, die nur auf
@@ -147,6 +182,9 @@ Oberfläche ruft ausschließlich `api` auf.
 | Methode | Route                          | Datenhaltung (`Api`)    | DB-Tabellen |
 | ------- | ------------------------------ | ----------------------- | ----------- |
 | GET     | `/api/health`                  | –                       | –           |
+| POST    | `/api/login`                   | `login`                 | `users`, `auth_tokens` |
+| POST    | `/api/register`                | `register`              | `users`, `auth_tokens` |
+| POST    | `/api/logout`                  | `logout`                | `auth_tokens` |
 | GET     | `/api/users`                   | `getUsers`              | `users`     |
 | GET     | `/api/games`                   | `getGameTypes`          | `game_types` |
 | GET     | `/api/sessions`                | `listSessions`          | `game_sessions`, `game_session_players` |
@@ -201,8 +239,11 @@ entsprechen den serverseitigen Prüfungen in `backend/src/api.rs` und sind in
 
 ## Bekannte Grenzen
 
-* **Login.** Anmeldung und Registrierung laufen über `/api/login` und `/api/register`;
-  die vier Beispiel-Personen haben das Passwort `password`.
+* **Anmeldung und Rollen.** Anmeldung und Registrierung laufen über
+  `/api/login` und `/api/register`; die vier Beispiel-Personen haben das
+  Passwort `password`, neue Konten sind `player`. Rollen und Sperren ändert nur
+  die Administration über `/api/admin/users` (im Backend, nicht in dieser
+  Ansicht).
 * **Nur eine gehostete Partie zur Zeit.** Ohne Server gibt es keine
   Sitzungs-IDs, die werkzeugübergreifend eindeutig sind – zwei gleichzeitige
   Fenster könnten ihr Ergebnis nicht eindeutig zuordnen. Die Oberfläche weist

@@ -1,13 +1,12 @@
 import { useMemo } from "react";
-import { CircleUser, Lock } from "lucide-react";
+import { CircleUser } from "lucide-react";
 
 import { AppShell } from "./components/AppShell";
-import { Avatar, EmptyState, Notice, RoleChip, Skeleton } from "./components/ui";
+import { Avatar, Notice, RoleChip, Skeleton } from "./components/ui";
 import { useLiveData } from "./hooks/useLiveData";
-import { usePersistentState } from "./hooks/usePersistentState";
 import { api } from "./lib/api";
+import { useAuth } from "./lib/auth";
 import { formatDateTime } from "./lib/format";
-import { useNavigate } from "./router";
 import type { User } from "./types";
 
 /**
@@ -16,68 +15,50 @@ import type { User } from "./types";
  * sofort zu den personalisierten Ansichten passt.
  */
 const ProfileView: React.FC = () => {
-  const navigate = useNavigate();
-  const [currentUserId, setCurrentUserId] = usePersistentState("currentUserId", 1);
+  const { user: authUser } = useAuth();
+  const userId = authUser?.id ?? 0;
 
-  const users = useLiveData(() => api.getUsers());
   const profile = useLiveData<User | null>(() =>
-    currentUserId === 0 ? Promise.resolve(null) : api.getUser(currentUserId),
+    userId === 0 ? Promise.resolve(null) : api.getUser(userId),
   );
   const games = useLiveData(() => api.listGames());
   const sessions = useLiveData(() => api.listSessions());
 
   const stats = useMemo(() => {
     const mine = (games.data ?? []).filter(
-      (game) => game.players.red === currentUserId || game.players.yellow === currentUserId,
+      (game) => game.players.red === userId || game.players.yellow === userId,
     );
     const wins = mine.filter((game) => {
-      if (game.players.red === currentUserId) return game.winner === "red";
+      if (game.players.red === userId) return game.winner === "red";
       return game.winner === "yellow";
     }).length;
     const mySessions = (sessions.data ?? []).filter(
       (session) =>
-        session.hostId === currentUserId ||
-        session.players.red === currentUserId ||
-        session.players.yellow === currentUserId,
+        session.hostId === userId ||
+        session.players.red === userId ||
+        session.players.yellow === userId,
     );
     return {
       games: mine.length,
       wins,
       sessions: mySessions.length,
-      hosted: mySessions.filter((session) => session.hostId === currentUserId).length,
+      hosted: mySessions.filter((session) => session.hostId === userId).length,
     };
-  }, [currentUserId, games.data, sessions.data]);
+  }, [userId, games.data, sessions.data]);
 
-  const loading = users.loading || profile.loading || games.loading || sessions.loading;
-  const loadError = users.error ?? profile.error ?? games.error ?? sessions.error;
-  const user = profile.data ?? users.data?.find((entry) => entry.id === currentUserId);
+  const loading = profile.loading || games.loading || sessions.loading;
+  const loadError = profile.error ?? games.error ?? sessions.error;
+  const user = profile.data ?? authUser;
 
   return (
-    <AppShell
-      users={users.data ?? []}
-      currentUserId={currentUserId}
-      onCurrentUserChange={setCurrentUserId}
-      active="profile"
-    >
+    <AppShell active="profile">
       {loadError ? (
         <Notice tone="danger" title="Profil konnte nicht geladen werden">
           {loadError}
         </Notice>
       ) : null}
 
-      {currentUserId === 0 ? (
-        <EmptyState
-          icon={Lock}
-          title="Nicht angemeldet"
-          action={
-            <button type="button" className="btn btn--sm btn--primary" onClick={() => navigate("/login")}>
-              Jetzt anmelden
-            </button>
-          }
-        >
-          Melde dich an, um dein gespeichertes Profil und deine persönlichen Statistiken zu sehen.
-        </EmptyState>
-      ) : loading ? (
+      {loading ? (
         <Skeleton rows={3} />
       ) : user ? (
         <>

@@ -5,8 +5,9 @@ import { AppShell } from "./components/AppShell";
 import { GameTile, type GameTally } from "./components/GameTile";
 import { EmptyState, Notice, Skeleton } from "./components/ui";
 import { useLiveData } from "./hooks/useLiveData";
-import { usePersistentState } from "./hooks/usePersistentState";
 import { api } from "./lib/api";
+import { useAuth } from "./lib/auth";
+import { canViewSessions } from "./lib/permissions";
 import { emptyTally } from "./lib/tally";
 import { bySortOrder } from "./lib/gameTypes";
 import { useNavigate } from "./router";
@@ -18,13 +19,12 @@ import type { GameType } from "./types";
  */
 const Catalog: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
 
-  const users = useLiveData(() => api.getUsers());
   const gameTypes = useLiveData(() => api.getGameTypes());
   const games = useLiveData(() => api.listGames());
   const sessions = useLiveData(() => api.listSessions());
 
-  const [currentUserId, setCurrentUserId] = usePersistentState("currentUserId", 1);
   const [query, setQuery] = useState("");
 
   const catalog = useMemo(
@@ -61,17 +61,12 @@ const Catalog: React.FC = () => {
 
   const playableCount = catalog.filter((game) => game.implemented).length;
   const loading = gameTypes.loading || games.loading || sessions.loading;
-  const loadError = gameTypes.error ?? games.error ?? sessions.error ?? users.error;
+  const loadError = gameTypes.error ?? games.error ?? sessions.error;
 
   const totalGames = (games.data ?? []).length;
 
   return (
-    <AppShell
-      users={users.data ?? []}
-      currentUserId={currentUserId}
-      onCurrentUserChange={setCurrentUserId}
-      active="catalog"
-    >
+    <AppShell active="catalog">
       {loadError ? (
         <Notice tone="danger" title="Katalog konnte nicht geladen werden">
           {loadError}
@@ -150,14 +145,25 @@ const Catalog: React.FC = () => {
       </section>
 
       <section className="catalog-notes" aria-label="Hinweise">
-        <p>
-          <History aria-hidden="true" size={15} />
-          Sitzungen und Verläufe aller Spiele findest du unter{" "}
-          <button type="button" className="link" onClick={() => navigate("/sessions")}>
-            Sitzungen
-          </button>
-          .
-        </p>
+        {canViewSessions(user?.role) ? (
+          <p>
+            <History aria-hidden="true" size={15} />
+            Sitzungen und Verläufe aller Spiele findest du unter{" "}
+            <button type="button" className="link" onClick={() => navigate("/sessions")}>
+              Sitzungen
+            </button>
+            .
+          </p>
+        ) : (
+          <p>
+            <History aria-hidden="true" size={15} />
+            Deine Partien startest du direkt im Spiel oder unter{" "}
+            <button type="button" className="link" onClick={() => navigate("/play")}>
+              Direkt spielen
+            </button>
+            .
+          </p>
+        )}
         <p>
           <Users aria-hidden="true" size={15} />
           {playableCount} von {catalog.length} Spielen sind umgesetzt. Die übrigen sind in der Datenbank angelegt
