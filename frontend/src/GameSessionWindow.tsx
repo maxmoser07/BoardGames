@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Ban, Flag, LayoutGrid, Pause, Play, RotateCcw, Trophy } from "lucide-react";
 
-import ConnectFour from "./ConnectFour";
+import ConnectFourGame from "./ConnectFourGame";
 import { GamePreview } from "./components/GamePreview";
 import { Logo } from "./components/Logo";
 import { Avatar, Badge, Notice, Spinner } from "./components/ui";
@@ -136,8 +136,8 @@ interface SessionBodyProps {
 
 /**
  * Brett plus Sitzungsverwaltung. Solange die Sitzung läuft, steuert
- * `ConnectFour` (und damit der eingefrorene `useConnectFour`) das Spiel; sobald
- * die Sitzung einen Ausgang hat, zeigt das Fenster das Endergebnis.
+ * `ConnectFourGame` (und damit der eingefrorene `useConnectFour`) das Spiel;
+ * sobald die Sitzung einen Ausgang hat, zeigt das Fenster das Endergebnis.
  */
 function SessionBody({ session, users, role, userId }: SessionBodyProps) {
   const games = useLiveData(() => api.listGames());
@@ -259,22 +259,16 @@ function SessionBody({ session, users, role, userId }: SessionBodyProps) {
             </p>
           )}
 
-          {/* `ConnectFour` ist eingefroren und bietet keine Sperre. Solange
-              pausiert ist, wird das Brett gar nicht erst eingebunden – sonst
-              könnten weiter Züge fallen, die niemand sehen kann. Beim
-              Fortsetzen kommt es mit `key` neu und verliert seinen Stand;
-              deshalb bleibt die Sitzung hier bewusst bestehen und wir bitten um
-              einen Neustart statt um einen leeren Brettzustand. */}
-          {/* `ConnectFour` ist eingefroren: es kennt weder Pause noch Sperre,
-              und der Brettzustand liegt in `useConnectFour`. Deshalb bleibt das
-              Brett eingebunden – sonst ginge der Spielstand verloren – und wird
-              von außen gesperrt:
+          {/* `ConnectFourGame` kennt weder Pause noch Sperre, und der
+              Brettzustand liegt im eingefrorenen `useConnectFour`. Deshalb
+              bleibt das Brett eingebunden – sonst ginge der Spielstand verloren
+              – und wird von außen gesperrt:
               `inert` nimmt Tastatur- und Zeigereingaben vollständig zurück
               (die Zellen sind echte Buttons, ein Blende allein genügt nicht),
               die Deckschicht macht den Zustand sichtbar. */}
           <div className="board" data-paused={paused}>
             <div className="board__panel" inert={paused || undefined}>
-              <ConnectFour key={session.id} />
+              <ConnectFourGame key={session.id} />
             </div>
             {paused ? (
               <div className="board__veil" aria-hidden="true">

@@ -13,6 +13,7 @@ import {
 
 import { AppShell } from "./components/AppShell";
 import { Badge, EmptyState, Notice, Spinner } from "./components/ui";
+import { WinOdds } from "./components/WinOdds";
 import { useCameraMoveTracker } from "./hooks/useCameraMoveTracker";
 import { ApiError, api } from "./lib/api";
 import {
@@ -26,7 +27,6 @@ import {
   winnerOf,
 } from "./lib/camera";
 import type { BoardCorners, BoardState, Point, Side } from "./lib/camera";
-import { SIDE_LABEL } from "./types";
 import { useNavigate } from "./router";
 import "./CameraView.css";
 
@@ -43,6 +43,33 @@ const CORNER_HANDLES = [
 ] as const;
 
 type CornerKey = (typeof CORNER_HANDLES)[number]["key"];
+
+type ChipPalette = "yellow-green" | "red-yellow";
+
+interface SideDisplay {
+  label: string;
+  tone: "red" | "yellow" | "green";
+}
+
+/**
+ * Physische Steinfarben. Intern bleibt es bei den Seiten "red"/"yellow", weil
+ * Datenhaltung und Spiel-Logik nur diese kennen. Grün wird auf "red" abgebildet
+ * und in der Kamera-Ansicht als Grün dargestellt.
+ */
+const CHIP_PALETTES: Record<ChipPalette, { sides: Record<Side, SideDisplay> }> = {
+  "yellow-green": {
+    sides: {
+      red: { label: "Grün", tone: "green" },
+      yellow: { label: "Gelb", tone: "yellow" },
+    },
+  },
+  "red-yellow": {
+    sides: {
+      red: { label: "Rot", tone: "red" },
+      yellow: { label: "Gelb", tone: "yellow" },
+    },
+  },
+};
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -108,6 +135,7 @@ const CameraView: React.FC = () => {
   const [flipX, setFlipX] = useState(false);
   const [flipY, setFlipY] = useState(false);
   const [dragging, setDragging] = useState<CornerKey | null>(null);
+  const [palette, setPalette] = useState<ChipPalette>("yellow-green");
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -127,6 +155,7 @@ const CameraView: React.FC = () => {
   }, [board]);
 
   const nextSide: Side = counts.red === counts.yellow ? "red" : "yellow";
+  const sideDisplay = CHIP_PALETTES[palette].sides;
 
   // Der Tracker speichert den Startzustand und legt erkannte Züge darauf. Um zu
   // erkennen, ob die Partie auf einem leeren Brett begann, werden die Züge
@@ -352,24 +381,29 @@ const CameraView: React.FC = () => {
         const size = cellSizeAt(transform, BOARD_LAYOUT, row, col);
         const radius = Math.max(2, Math.min(size.width, size.height) * 0.36);
 
+        const tone = sideDisplay[side].tone;
         context.beginPath();
         context.arc(point.x, point.y, radius, 0, Math.PI * 2);
         context.fillStyle =
-          side === "red" ? "rgba(224, 68, 75, 0.82)" : "rgba(232, 164, 23, 0.85)";
+          tone === "green"
+            ? "rgba(47, 191, 98, 0.82)"
+            : tone === "red"
+              ? "rgba(224, 68, 75, 0.82)"
+              : "rgba(232, 164, 23, 0.85)";
         context.fill();
         context.lineWidth = Math.max(1, radius * 0.14);
         context.strokeStyle = "rgba(255, 255, 255, 0.72)";
         context.stroke();
       }
     }
-  }, [board, calibrated, corners, editing, status, videoSize]);
+  }, [board, calibrated, corners, editing, sideDisplay, status, videoSize]);
 
   const winnerLabel =
     winner === null
       ? null
       : winner === "draw"
         ? "Unentschieden"
-        : `${SIDE_LABEL[winner]} gewinnt`;
+        : `${sideDisplay[winner].label} gewinnt`;
 
   const stageStyle =
     videoSize === null ? undefined : { aspectRatio: `${videoSize.width} / ${videoSize.height}` };
@@ -520,6 +554,17 @@ const CameraView: React.FC = () => {
                     : "Kamera aus"}
             </span>
 
+            <label className="camera-palette">
+              <span>Steine</span>
+              <select
+                value={palette}
+                onChange={(event) => setPalette(event.target.value as ChipPalette)}
+              >
+                <option value="yellow-green">Gelb / Grün</option>
+                <option value="red-yellow">Rot / Gelb</option>
+              </select>
+            </label>
+
             {status === "running" ? (
               <>
                 {editing ? (
@@ -623,7 +668,7 @@ const CameraView: React.FC = () => {
                   line.map((cell, col) => (
                     <span
                       key={`${row}-${col}`}
-                      className={`camera-board__cell ${cell ?? ""}`}
+                      className={`camera-board__cell ${cell === null ? "" : sideDisplay[cell].tone}`}
                       aria-hidden="true"
                     />
                   )),
@@ -633,15 +678,26 @@ const CameraView: React.FC = () => {
               <p className="camera-turn">
                 {winner === null ? (
                   <>
-                    <span className={`camera-dot camera-dot--${nextSide}`} aria-hidden="true" />
-                    {SIDE_LABEL[nextSide]} ist am Zug.
+                    <span
+                      className={`camera-dot camera-dot--${sideDisplay[nextSide].tone}`}
+                      aria-hidden="true"
+                    />
+                    {sideDisplay[nextSide].label} ist am Zug.
                   </>
                 ) : winner === "draw" ? (
                   "Das Brett ist voll – Unentschieden."
                 ) : (
-                  `${SIDE_LABEL[winner]} hat gewonnen.`
+                  `${sideDisplay[winner].label} hat gewonnen.`
                 )}
               </p>
+
+              <WinOdds
+                board={board}
+                currentPlayer={nextSide}
+                winner={winner}
+                labels={{ red: sideDisplay.red.label, yellow: sideDisplay.yellow.label }}
+                tones={{ red: sideDisplay.red.tone, yellow: sideDisplay.yellow.tone }}
+              />
 
               {baselineEmpty === false ? (
                 <Notice tone="warn" title="Tracking ab laufendem Brett">
@@ -716,10 +772,10 @@ const CameraView: React.FC = () => {
                       <li key={move.turn} className="camera-move">
                         <span className="camera-move__side">
                           <span
-                            className={`camera-dot camera-dot--${move.side}`}
+                            className={`camera-dot camera-dot--${sideDisplay[move.side].tone}`}
                             aria-hidden="true"
                           />
-                          {SIDE_LABEL[move.side]}
+                          {sideDisplay[move.side].label}
                         </span>
                         <span>Zug {move.turn}</span>
                         <span>Spalte {move.location.x + 1}</span>

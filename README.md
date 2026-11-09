@@ -2,7 +2,9 @@
 
 Sitzungen fuer Brettspiele hosten, Spielfelder in eigenen Fenstern oeffnen und
 Spielverlaeufe sammeln. Connect Four ist die erste umgesetzte Partie, das
-Datenmodell ist bereits Spielunabhaengig.
+Datenmodell ist bereits Spielunabhaengig. Waehrend der Partie zeigt das Brett
+laufend geschaetzte Gewinnchancen und einen Zugtipp; die Bewertung laeuft im
+Browser und ist im Frontend-README unter „Live-Gewinnchancen“ beschrieben.
 
 ```
 BoardGames/

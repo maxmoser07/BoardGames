@@ -50,11 +50,13 @@ src/
   PlayView.tsx             Partie ohne Sitzung unter /play
   router.ts                Pfadauflösung ohne Router-Bibliothek
   types.ts                 Domänen-Typen (Sitzung, Ergebnis, Seite)
-  ConnectFour.tsx          eingefroren – siehe unten
+  ConnectFour.tsx          eingefroren – reines Brett ohne Auswertung (siehe unten)
+  ConnectFourGame.tsx      aktives Brett mit Live-Gewinnchancen
   useConnectFour.ts        eingefroren – siehe unten
-  ConnectFour.css          Gestaltung des Bretts
+  ConnectFour.css          Gestaltung des Bretts inkl. Chancen-Balken
   index.css                Gestaltung der Oberfläche (Variablen + Komponenten)
   components/              Bausteine: Karten, Kacheln, Auswahl, Anzeigen, Rahmen
+    WinOdds.tsx            Balken, Legende und Zugtipp zu den Gewinnchancen
   hooks/                   useLiveData, useNow, usePausedTime, usePersistentState,
                            useCameraMoveTracker
   lib/
@@ -62,6 +64,7 @@ src/
     auth.ts                Bearer-Token, Profil und useAuth
     permissions.ts         Rollenmatrix für Navigation und Bedienelemente
     gameResultEndpoint.ts  ergänzt Sitzungs-Id und Spielzeit beim POST des Hooks
+    connectFourOdds.ts     Monte-Carlo-Bewertung einer Stellung
     camera/                Kamera-Bibliothek: Kalibrierung, Erkennung, Zugtracker
 scripts/logic.test.ts      Tests für die reine Logik (npm test)
 scripts/camera.test.ts     Tests für Geometrie, Farben, Detektor und Tracker
@@ -92,6 +95,38 @@ durchgängig ersetzt.
   `lib/gameResultEndpoint.ts`, bevor der Request das Fenster verlässt (siehe
   [Datenhaltung](#datenhaltung)). Ohne diese Ergänzung entstünde zusätzlich zur
   Partie eine offene Sitzung.
+
+Die aktive Ansicht ist deshalb `ConnectFourGame.tsx`: Sie übernimmt das
+unveränderte Markup und die CSS-Klassen des eingefrorenen Bretts, bindet aber
+`useConnectFour` direkt ein, um den Spielstand an die Auswertung zu reichen.
+`ConnectFour.tsx` bleibt als unveränderte Basis erhalten.
+
+## Live-Gewinnchancen
+
+Über dem Brett steht während der Partie ein Balken mit den geschätzten
+Gewinnchancen für Rot, Unentschieden und Gelb. Darunter stehen die Prozentwerte
+als Text, eine kurze Einordnung („Rot leicht im Vorteil“) und – solange die
+Partie läuft – die Spalte mit der höchsten geschätzten Siegchance für die Person
+am Zug. Die gleiche Anzeige erscheint in der Kamera-Ansicht; dort werden die
+Beschriftungen und Farben an die gewählte Steinpalette angepasst (Grün/Gelb).
+
+Die Bewertung liegt in `lib/connectFourOdds.ts` und läuft vollständig im
+Browser:
+
+* Ab der aktuellen Stellung werden 320 Partien zu Ende gespielt (Monte Carlo).
+* Beide Seiten nehmen einen sofortigen Sieg immer, blockieren eine unmittelbare
+  gegnerische Drohung und wählen sonst eine freie Spalte mit leichter
+  Mittepräferenz.
+* Der Zufall ist an die Stellung gekoppelt: dieselbe Stellung ergibt dieselbe
+  Anzeige. Ergebnisse werden kurz zwischengespeichert, damit das Polling der
+  Sitzung nicht jede Sekunde neu rechnet.
+* Der Zugtipp bewertet zusätzlich jede legale Spalte mit eigenen Simulationen
+  und empfiehlt die mit der höchsten Siegchance.
+
+Das ist eine Orientierung, keine perfekte Lösung: Connect Four ist zwar gelöst,
+eine vollständige Suche wäre im Browser aber zu teuer. Die Anzeige greift nicht
+in Regeln, Zugablauf oder Speicherung ein. `npm test` prüft unter anderem
+sofortige Siege, Blockaden, entschiedene Partien und die Reproduzierbarkeit.
 
 ## Rollen und Rechte
 
@@ -244,6 +279,12 @@ Die Vorschau wird bewusst nicht gespiegelt, damit Kalibrierung und Erkennung
 dieselben Pixel benutzen. Für eine Kamera auf der gegenüberliegenden Brettseite
 gibt es die X/Y-Spiegelung in der Kalibrierung.
 
+Die Steinfarben sind standardmäßig **Gelb/Grün** (die grünen Steine werden
+intern auf die Seite „red“ abgebildet, weil Datenhaltung und Spiel-Logik nur
+„red“/„yellow“ kennen). Über „Steine“ in der Werkzeugleiste lässt sich die
+Anzeige auf **Rot/Gelb** umschalten; die Erkennung akzeptiert Rot, Gelb und
+Grün unabhängig davon.
+
 > Der Browser gibt die Kamera nur in einem sicheren Kontext frei. Lokal ist das
 > über `http://localhost:5173` der Fall; für eine andere Adresse braucht die
 > Instanz HTTPS (siehe Hinweis in der Ansicht).
@@ -309,6 +350,8 @@ entsprechen den serverseitigen Prüfungen in `backend/src/api.rs` und sind in
 * Das Brett ist mit `role="grid"` und Beschriftungen je Feld ausgezeichnet.
 * Farbige Zustände sind zusätzlich beschriftet (`Laufend`, `Rot gewinnt`, …) –
   Farbe allein trägt keine Information.
+* Die Gewinnchancen stehen als Prozenttext in der Legende; der Balken ist als
+  Ganzes beschriftet und aktualisiert sich über eine höfliche Live-Region.
 * `prefers-color-scheme` und `prefers-reduced-motion` werden berücksichtigt;
 * Layout und Schrift skalieren zwischen 360 px und Desktop.
 

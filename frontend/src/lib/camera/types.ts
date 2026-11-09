@@ -99,6 +99,8 @@ export interface ColorThresholds {
   redHue: number;
   /** Hue-Mittelwert für Gelb. */
   yellowHue: number;
+  /** Hue-Mittelwert für Grün (gelb/grüne Steinsätze). */
+  greenHue: number;
   /** Ab dieser Hue-Abweichung ist eine Farbe keiner Seite mehr zuzuordnen. */
   maxHueDistance: number;
 }
@@ -112,6 +114,12 @@ export interface ConnectFourDetectorOptions {
    */
   sampleRadius?: number;
   thresholds?: Partial<ColorThresholds>;
+  /**
+   * Interne Seite, der grüne Steine zugeordnet werden. Standard: "red".
+   * Die Oberfläche beschriftet diese Seite dann als "Grün"; die Datenhaltung
+   * bleibt bei den bestehenden Seiten "red"/"yellow".
+   */
+  greenAs?: Side;
   /**
    * Spalten spiegeln. Nötig, wenn die Kamera das Brett von der anderen
    * Längsseite sieht oder das Vorschaubild gespiegelt ist.

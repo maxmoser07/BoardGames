@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, History } from "lucide-react";
 
-import ConnectFour from "./ConnectFour";
+import ConnectFourGame from "./ConnectFourGame";
 import { GameCard } from "./components/GameCard";
 import { Logo } from "./components/Logo";
 import { EmptyState, Notice, Skeleton } from "./components/ui";
@@ -57,7 +57,7 @@ const PlayView: React.FC = () => {
           „Spielverläufe“.
         </Notice>
 
-        <ConnectFour />
+        <ConnectFourGame />
 
         <section className="panel" aria-labelledby="play-history">
           <header className="panel__head">

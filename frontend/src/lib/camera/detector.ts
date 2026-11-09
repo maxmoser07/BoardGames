@@ -16,6 +16,7 @@ import type {
   ColorThresholds,
   ConnectFourDetectorOptions,
   PixelSource,
+  Side,
 } from "./types";
 
 export const CONNECT_FOUR_LAYOUT: BoardLayout = { rows: 6, cols: 7 };
@@ -25,6 +26,7 @@ export class ConnectFourDetector implements BoardDetector {
   private readonly transform: Homography;
   private readonly sampleRadius: number;
   private readonly thresholds: Partial<ColorThresholds>;
+  private readonly greenAs: Side;
   private readonly flipX: boolean;
   private readonly flipY: boolean;
 
@@ -33,6 +35,7 @@ export class ConnectFourDetector implements BoardDetector {
     this.transform = createHomography(options.corners);
     this.sampleRadius = options.sampleRadius ?? 0.3;
     this.thresholds = options.thresholds ?? {};
+    this.greenAs = options.greenAs ?? "red";
     this.flipX = options.flipX ?? false;
     this.flipY = options.flipY ?? false;
   }
@@ -51,7 +54,10 @@ export class ConnectFourDetector implements BoardDetector {
         const radius = Math.max(1, this.sampleRadius * Math.min(size.width, size.height));
 
         const color = source.averageColor(point.x, point.y, radius);
-        const classification = classifyColor(color, this.thresholds);
+        const classification = classifyColor(color, {
+          ...this.thresholds,
+          greenAs: this.greenAs,
+        });
 
         const row = this.flipY ? this.layout.rows - 1 - imageRow : imageRow;
         const col = this.flipX ? this.layout.cols - 1 - imageCol : imageCol;

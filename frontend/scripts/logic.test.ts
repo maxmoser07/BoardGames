@@ -7,6 +7,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { COLS, ROWS, buildGrid, summariseMoves, validateConnectFourResult } from "../src/lib/connectFour.ts";
+import {
+  DEFAULT_SAMPLES,
+  estimateWinningOdds,
+  oddsHeadline,
+} from "../src/lib/connectFourOdds.ts";
 import { GAME_TYPES, bySortOrder, findGameType } from "../src/lib/gameTypes.ts";
 import { parseRoute, setupPath, windowPath } from "../src/router.ts";
 import {
@@ -20,6 +25,7 @@ import {
   winnerToOutcome,
   type ConnectFourMove,
   type GameSession,
+  type Side,
 } from "../src/types.ts";
 
 /** Rot gewinnt waagerecht in der untersten Reihe. */
@@ -39,6 +45,26 @@ const fullBoard: ConnectFourMove[] = Array.from({ length: ROWS * COLS }, (_, i) 
   player: i % 2 === 0 ? ("red" as const) : ("yellow" as const),
   location: { x: i % COLS, y: ROWS - 1 - Math.floor(i / COLS) },
 }));
+
+/** Rot hat drei Steine in der untersten Reihe und kann in Spalte 3 gewinnen. */
+const redThreat: ConnectFourMove[] = [
+  { turn: 1, player: "red", location: { x: 0, y: 5 } },
+  { turn: 2, player: "yellow", location: { x: 0, y: 4 } },
+  { turn: 3, player: "red", location: { x: 1, y: 5 } },
+  { turn: 4, player: "yellow", location: { x: 1, y: 4 } },
+  { turn: 5, player: "red", location: { x: 2, y: 5 } },
+  { turn: 6, player: "yellow", location: { x: 6, y: 5 } },
+];
+
+/** Volles Brett ohne Viererreihe – für den Unentschieden-Fall. */
+const drawBoard: Side[][] = [
+  ["red", "red", "yellow", "red", "red", "yellow", "yellow"],
+  ["yellow", "red", "yellow", "yellow", "red", "red", "red"],
+  ["red", "red", "red", "yellow", "red", "yellow", "red"],
+  ["yellow", "yellow", "red", "yellow", "yellow", "red", "red"],
+  ["red", "yellow", "yellow", "red", "yellow", "red", "yellow"],
+  ["yellow", "yellow", "red", "yellow", "yellow", "red", "yellow"],
+];
 
 function rejects(result: Parameters<typeof validateConnectFourResult>[0]): void {
   assert.throws(() => validateConnectFourResult(result));
@@ -265,5 +291,84 @@ describe("Connect-Four-Verlauf", () => {
     rejects({ moves: [{ turn: 1, player: "red", location: { x: 0, y: 3 } }], winner: "red" });
     rejects({ moves: [{ turn: 1, player: "red", location: { x: 0, y: 5 } }], winner: "yellow" });
     rejects({ moves: redWins, winner: "draw" });
+  });
+});
+
+describe("Gewinnchancen", () => {
+  it("verteilt 100 Prozent und liefert einen gültigen Zugtipp", () => {
+    const odds = estimateWinningOdds(buildGrid(redThreat), "red");
+
+    assert.equal(odds.red + odds.draw + odds.yellow, 100);
+    assert.ok(odds.red >= 0 && odds.red <= 100);
+    assert.ok(odds.draw >= 0 && odds.draw <= 100);
+    assert.ok(odds.yellow >= 0 && odds.yellow <= 100);
+    assert.ok(odds.bestColumn !== null);
+    assert.ok(odds.bestColumn >= 0 && odds.bestColumn < COLS);
+    assert.equal(odds.samples, DEFAULT_SAMPLES);
+    assert.equal(odds.finished, false);
+  });
+
+  it("ist für dieselbe Stellung reproduzierbar", () => {
+    const grid = buildGrid(redThreat);
+    assert.deepEqual(estimateWinningOdds(grid, "yellow"), estimateWinningOdds(grid, "yellow"));
+  });
+
+  it("verändert das übergebene Brett nicht", () => {
+    const grid = buildGrid(redThreat);
+    const before = JSON.stringify(grid);
+    estimateWinningOdds(grid, "red");
+    assert.equal(JSON.stringify(grid), before);
+  });
+
+  it("erkennt einen sofortigen Sieg", () => {
+    const odds = estimateWinningOdds(buildGrid(redThreat), "red");
+
+    assert.equal(odds.red, 100);
+    assert.equal(odds.draw, 0);
+    assert.equal(odds.yellow, 0);
+    assert.equal(odds.bestColumn, 3);
+    assert.equal(odds.bestChance, 100);
+    assert.equal(odds.finished, false);
+  });
+
+  it("empfiehlt die Blockade einer gegnerischen Drohung", () => {
+    const odds = estimateWinningOdds(buildGrid(redThreat), "yellow");
+
+    assert.equal(odds.bestColumn, 3);
+    assert.ok(odds.yellow > 0);
+  });
+
+  it("meldet eine entschiedene Partie", () => {
+    const won = estimateWinningOdds(buildGrid(redWins), "yellow");
+
+    assert.deepEqual(
+      {
+        red: won.red,
+        draw: won.draw,
+        yellow: won.yellow,
+        finished: won.finished,
+        bestColumn: won.bestColumn,
+      },
+      { red: 100, draw: 0, yellow: 0, finished: true, bestColumn: null },
+    );
+    assert.match(oddsHeadline(won), /Rot gewinnt/);
+  });
+
+  it("erkennt ein volles Brett als Unentschieden", () => {
+    const odds = estimateWinningOdds(drawBoard, "red");
+
+    assert.equal(odds.red, 0);
+    assert.equal(odds.yellow, 0);
+    assert.equal(odds.draw, 100);
+    assert.equal(odds.finished, true);
+    assert.equal(odds.bestColumn, null);
+  });
+
+  it("beschreibt die Stellung in Worten", () => {
+    assert.equal(oddsHeadline(estimateWinningOdds(buildGrid(redThreat), "red")), "Rot klar im Vorteil");
+    assert.equal(
+      oddsHeadline(estimateWinningOdds(buildGrid(redThreat), "red"), { red: "Grün" }),
+      "Grün klar im Vorteil",
+    );
   });
 });

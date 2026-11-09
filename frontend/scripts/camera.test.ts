@@ -27,6 +27,7 @@ import type {
 
 const RED: Rgb = { r: 220, g: 30, b: 30 };
 const YELLOW: Rgb = { r: 240, g: 210, b: 20 };
+const GREEN: Rgb = { r: 40, g: 190, b: 70 };
 const EMPTY: Rgb = { r: 12, g: 12, b: 12 };
 
 function colorOf(side: "red" | "yellow" | null): Rgb {
@@ -142,6 +143,15 @@ describe("Farbklassifikation", () => {
     assert.ok(yellow.confidence > 0.5);
   });
 
+  it("erkennt Grün und ordnet es der zweiten Seite zu", () => {
+    const green = classifyColor(GREEN);
+    assert.equal(green.side, "red");
+    assert.ok(green.confidence > 0.5);
+
+    const mapped = classifyColor(GREEN, { greenAs: "yellow" });
+    assert.equal(mapped.side, "yellow");
+  });
+
   it("erkennt dunkle und graue Felder als leer", () => {
     const dark = classifyColor({ r: 10, g: 10, b: 10 });
     assert.equal(dark.side, null);
@@ -188,6 +198,21 @@ describe("Connect-Four-Detektor", () => {
     assert.equal(result.cells[0][0].side, null);
     assert.equal(result.capturedAt, 1_234);
     assert.ok(result.confidence > 0.5);
+  });
+
+  it("liest grüne Steine als zweite Seite", () => {
+    const source: PixelSource = {
+      width: 700,
+      height: 600,
+      averageColor: () => GREEN,
+    };
+    const detector = new ConnectFourDetector({
+      corners: cornersFromRect({ x: 0, y: 0, width: 700, height: 600 }),
+    });
+
+    const result = detector.detect(source, 1);
+    assert.equal(result.cells[0][0].side, "red");
+    assert.equal(result.cells[5][6].side, "red");
   });
 
   it("spiegelt das Bild bei flipX und flipY", () => {

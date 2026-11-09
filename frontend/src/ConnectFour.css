@@ -1,8 +1,10 @@
 /* =============================================================================
-   Connect Four – Brett
-   Diese Datei gehört zu `ConnectFour.tsx` / `useConnectFour.ts`. Beide Dateien
-   sind eingefroren, deshalb bleibt die Klassenstruktur unverändert:
+   Connect Four – Brett und Live-Gewinnchancen
+   Diese Datei gehört zu `ConnectFourGame.tsx` / `useConnectFour.ts`; das
+   eingefrorene `ConnectFour.tsx` nutzt dieselben Brett-Klassen. Die Struktur
+   bleibt deshalb unverändert:
    .c4-wrapper  .c4-status  .c4-board  .c4-cell(.red|.yellow)  .c4-reset
+   Dazu kommen die Klassen .c4-odds* für die Auswertung.
    Gestaltet wird nur über CSS; die Variablen kommen aus index.css.
    ========================================================================== */
 
@@ -125,10 +127,183 @@
   border-color: var(--border-strong);
 }
 
+/* =============================================================================
+   Live-Gewinnchancen
+   Farbe allein trägt keine Information: die Legende nennt jede Seite und den
+   Prozentwert, der Balken ist zusätzlich als Ganzes beschriftet.
+   ========================================================================== */
+
+.c4-odds {
+  width: 100%;
+  max-width: 34rem;
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.7rem 0.85rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.c4-odds__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.c4-odds__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.c4-odds__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.c4-odds__state--live {
+  color: var(--success);
+}
+
+.c4-odds__bar {
+  display: flex;
+  min-height: 1.65rem;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.c4-odds__part {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  overflow: hidden;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+  white-space: nowrap;
+  transition: width 220ms ease;
+}
+
+.c4-odds__part--red {
+  background: var(--red);
+}
+
+.c4-odds__part--draw {
+  background: var(--text-dim);
+}
+
+.c4-odds__part--yellow {
+  background: var(--yellow);
+  color: #3d2a00;
+  text-shadow: none;
+}
+
+.c4-odds__part--green {
+  background: var(--success);
+}
+
+.c4-odds__legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 0.75rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.c4-odds__legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.c4-odds__legend strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.c4-odds__dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  flex: none;
+}
+
+.c4-odds__dot--red {
+  background: var(--red);
+}
+
+.c4-odds__dot--draw {
+  background: var(--text-dim);
+}
+
+.c4-odds__dot--yellow {
+  background: var(--yellow);
+}
+
+.c4-odds__dot--green {
+  background: var(--success);
+}
+
+.c4-odds__headline {
+  font-size: 0.85rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.c4-odds__advice {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 0.8rem;
+}
+
+.c4-odds__advice svg {
+  flex: none;
+  margin-top: 0.15rem;
+  color: var(--accent);
+}
+
+.c4-odds__hint {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+}
+
+@media (prefers-color-scheme: dark) {
+  .c4-odds__part--green {
+    color: #062a1a;
+    text-shadow: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .c4-cell,
   .c4-cell:not(:disabled):hover,
   .c4-cell:not(:disabled):active {
     transform: none;
+  }
+
+  .c4-odds__part {
+    transition: none;
   }
 }

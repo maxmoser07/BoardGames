@@ -15,6 +15,7 @@ export const DEFAULT_COLOR_THRESHOLDS: ColorThresholds = {
   minValue: 0.2,
   redHue: 0,
   yellowHue: 55,
+  greenHue: 125,
   maxHueDistance: 35,
 };
 
@@ -22,6 +23,11 @@ export interface ColorClassification {
   side: Side | null;
   confidence: number;
   hsv: Hsv;
+}
+
+export interface ColorClassificationOptions extends Partial<ColorThresholds> {
+  /** Interne Seite für grüne Steine; Standard "red" (die andere Seite bleibt "yellow"). */
+  greenAs?: Side;
 }
 
 function clamp01(value: number): number {
@@ -70,9 +76,10 @@ export function circularHueDistance(a: number, b: number): number {
  */
 export function classifyColor(
   rgb: Rgb,
-  overrides: Partial<ColorThresholds> = {},
+  overrides: ColorClassificationOptions = {},
 ): ColorClassification {
-  const thresholds: ColorThresholds = { ...DEFAULT_COLOR_THRESHOLDS, ...overrides };
+  const { greenAs = "red", ...thresholdOverrides } = overrides;
+  const thresholds: ColorThresholds = { ...DEFAULT_COLOR_THRESHOLDS, ...thresholdOverrides };
   const hsv = rgbToHsv(rgb);
 
   // Leer ist entweder dunkel (schwarze Schlitze) oder grau/weiß (Brettrahmen).
@@ -91,8 +98,17 @@ export function classifyColor(
 
   const redScore = sideScore(thresholds.redHue);
   const yellowScore = sideScore(thresholds.yellowHue);
-  const bestSide: Side = redScore >= yellowScore ? "red" : "yellow";
-  const bestSideScore = Math.max(redScore, yellowScore);
+  const greenScore = sideScore(thresholds.greenHue);
+
+  let bestSide: Side = redScore >= yellowScore ? "red" : "yellow";
+  let bestSideScore = Math.max(redScore, yellowScore);
+
+  // Grün ist ein eigener Hue-Bereich, wird aber auf eine bestehende Seite
+  // abgebildet: Die Datenhaltung kennt weiterhin nur "red"/"yellow".
+  if (greenScore > bestSideScore) {
+    bestSide = greenAs;
+    bestSideScore = greenScore;
+  }
 
   if (bestSideScore > emptyConfidence) {
     return { side: bestSide, confidence: bestSideScore, hsv };
