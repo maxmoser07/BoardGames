@@ -1,15 +1,22 @@
 import type { ReactNode } from "react";
-import { Camera, CircleUser, Flag, History, LayoutGrid, Play, ShieldCheck } from "lucide-react";
+import { Camera, CircleUser, Flag, History, LayoutGrid, Play, ShieldCheck, Trophy } from "lucide-react";
 
 import { api } from "../lib/api";
 import { signOut, useAuth } from "../lib/auth";
 import { ROLE_LABEL } from "../lib/format";
-import { canManageReports, canViewSessions } from "../lib/permissions";
+import { canViewReports, canViewSessions } from "../lib/permissions";
 import { useNavigate } from "../router";
 import type { UserRole } from "../types";
 import { Logo } from "./Logo";
 
-export type ShellSection = "catalog" | "play" | "camera" | "sessions" | "reports" | "profile";
+export type ShellSection =
+  | "catalog"
+  | "play"
+  | "camera"
+  | "sessions"
+  | "reports"
+  | "ratings"
+  | "profile";
 
 interface AppShellProps {
   /** Welcher Navigationspunkt aktiv ist. */
@@ -33,7 +40,14 @@ const NAV = [
     label: "Meldungen",
     icon: Flag,
     match: "reports",
-    visible: (role: UserRole) => canManageReports(role),
+    visible: (role: UserRole) => canViewReports(role),
+  },
+  {
+    path: "/ratings",
+    label: "Rangliste",
+    icon: Trophy,
+    match: "ratings",
+    visible: () => true,
   },
   { path: "/profile", label: "Profil", icon: CircleUser, match: "profile", visible: () => true },
 ] as const;

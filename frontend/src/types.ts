@@ -230,3 +230,60 @@ export interface PlayerReport {
   updated_at: string;
   reviewed_at: string | null;
 }
+
+/* -------------------------------------------------------------------- Ratings */
+
+export interface PlayerRating {
+  userId: number;
+  username: string;
+  role: UserRole;
+  rating: number;
+  gamesPlayed: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  updatedAt: string;
+}
+
+export interface ResetRatingInput {
+  /** Zielwert; ohne Angabe gilt der Standardwert 1000. */
+  rating?: number;
+  reason?: string | null;
+  /** Standard ist true: ein Reset setzt auch die Statistik zurueck. */
+  resetStats?: boolean;
+}
+
+/* --------------------------------------------------- Meldungs-Visualisierung */
+
+export type ReportStatusCounts = Record<ReportStatus, number>;
+
+export interface ReportReasonCount {
+  reason: string;
+  count: number;
+}
+
+export interface ReportMonthCount {
+  month: string;
+  count: number;
+}
+
+export interface ReportUserCount {
+  user_id: number;
+  username: string;
+  count: number;
+}
+
+export interface ReportOverview {
+  /** `all` fuer Admins, `mine` fuer alle anderen Rollen. */
+  scope: "all" | "mine";
+  total: number;
+  by_status: ReportStatusCounts;
+  /** Meldungen, die die angemeldete Person selbst geschrieben hat. */
+  submitted: ReportStatusCounts;
+  /** Meldungen, in denen die angemeldete Person gemeldet wurde. */
+  received: ReportStatusCounts;
+  by_reason: ReportReasonCount[];
+  by_month: ReportMonthCount[];
+  /** Nur fuer Admins gefuellt. */
+  top_reported: ReportUserCount[];
+}

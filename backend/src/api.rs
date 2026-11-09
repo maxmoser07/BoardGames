@@ -18,13 +18,21 @@ use sqlx::mysql::MySqlPool;
 use sqlx::{MySql, QueryBuilder, Transaction};
 
 use crate::db::{
-    AdminUser, AuthUser, GameMove, GameType, PlayerReport, Session, SessionPlayer, User, UserProfile,
+    AdminUser, AuthUser, GameMove, GameType, PlayerRating, PlayerReport, Session, SessionPlayer,
+    User, UserProfile,
 };
 
 pub const CONNECT_FOUR: &str = "connect-four";
 const ROWS: usize = 6;
 const COLS: usize = 7;
 const SIDES: [&str; 2] = ["red", "yellow"];
+
+/// Startwert und Grenzen der Elo-Zahl. Ein Reset setzt auf `DEFAULT_RATING`.
+const DEFAULT_RATING: i32 = 1000;
+const MIN_RATING: i32 = 100;
+const MAX_RATING: i32 = 4000;
+/// Elo-K-Faktor. 32 ist der uebliche Wert fuer Vereinsspieler.
+const RATING_K: f64 = 32.0;
 
 /// Brett als [Zeile][Spalte]; der Wert ist der Index in `SIDES`.
 type Board = [[Option<usize>; COLS]; ROWS];
@@ -353,8 +361,15 @@ pub fn router() -> Router<MySqlPool> {
             get(read_connect_four_game),
         )
         .route("/api/demo-data", delete(delete_demo_data))
+        .route("/api/ratings", get(list_ratings))
+        .route("/api/ratings/{id}", get(read_rating))
+        .route(
+            "/api/admin/ratings/{id}/reset",
+            post(reset_rating),
+        )
         .route("/api/reports", get(list_reports))
         .route("/api/reports", post(create_report))
+        .route("/api/reports/visualisation", get(report_visualisation))
         .route("/api/reports/{id}", get(read_report))
         .route("/api/reports/{id}", patch(update_report))
         .route("/api/reports/{id}", put(update_report))
@@ -709,6 +724,14 @@ pub async fn register(
     .map_err(|e| ApiError::Internal(e.into()))?;
     let id = insert.last_insert_id();
 
+    // Jede Person startet mit einem Rating. Die Migration legt die Zeile nur
+    // fuer die damals vorhandenen Konten an.
+    sqlx::query("INSERT INTO player_ratings (user_id) VALUES (?)")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .map_err(|e| ApiError::Internal(e.into()))?;
+
     let permissions = fetch_permissions(&pool, id).await?;
     let (token, expires_at) = issue_token(&pool, id).await?;
 
@@ -754,6 +777,261 @@ pub async fn list_game_types(
     .await
     .map_err(|e| ApiError::Internal(e.into()))?;
     Ok(Json(json!(games)))
+}
+
+/* ------------------------------------------------------------------- Ratings */
+
+/// Alle Ratings, absteigend. Lesen darf jede angemeldete Person.
+pub async fn list_ratings(
+    State(pool): State<MySqlPool>,
+    _user: CurrentUser,
+) -> Result<Json<Value>, ApiError> {
+    let ratings = sqlx::query_as::<_, PlayerRating>(
+        "SELECT u.id AS user_id, u.username, u.role,
+                COALESCE(r.rating, ?) AS rating,
+                COALESCE(r.games_played, 0) AS games_played,
+                COALESCE(r.wins, 0) AS wins,
+                COALESCE(r.losses, 0) AS losses,
+                COALESCE(r.draws, 0) AS draws,
+                CAST(DATE_FORMAT(COALESCE(r.updated_at, u.created_at),
+                                 '%Y-%m-%dT%H:%i:%sZ') AS CHAR) AS updated_at
+         FROM users u
+         LEFT JOIN player_ratings r ON r.user_id = u.id
+         ORDER BY rating DESC, games_played DESC, u.username",
+    )
+    .bind(DEFAULT_RATING)
+    .fetch_all(&pool)
+    .await
+    .map_err(internal)?;
+    Ok(Json(json!(ratings)))
+}
+
+/// Rating einer einzelnen Person. Unbekannte Konten sind 404, vorhandene
+/// Konten ohne Zeile starten mit dem Standardwert.
+pub async fn read_rating(
+    State(pool): State<MySqlPool>,
+    _user: CurrentUser,
+    id: Result<Path<String>, PathRejection>,
+) -> Result<Json<Value>, ApiError> {
+    let id = path_id(id)?;
+    let rating = fetch_rating(&pool, id).await?;
+    Ok(Json(json!(rating)))
+}
+
+async fn fetch_rating(pool: &MySqlPool, id: u64) -> Result<PlayerRating, ApiError> {
+    sqlx::query_as::<_, PlayerRating>(
+        "SELECT u.id AS user_id, u.username, u.role,
+                COALESCE(r.rating, ?) AS rating,
+                COALESCE(r.games_played, 0) AS games_played,
+                COALESCE(r.wins, 0) AS wins,
+                COALESCE(r.losses, 0) AS losses,
+                COALESCE(r.draws, 0) AS draws,
+                CAST(DATE_FORMAT(COALESCE(r.updated_at, u.created_at),
+                                 '%Y-%m-%dT%H:%i:%sZ') AS CHAR) AS updated_at
+         FROM users u
+         LEFT JOIN player_ratings r ON r.user_id = u.id
+         WHERE u.id = ?",
+    )
+    .bind(DEFAULT_RATING)
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(internal)?
+    .ok_or_else(|| ApiError::NotFound(format!("no user with id {id}")))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResetRatingDto {
+    /// Zielwert; ohne Angabe gilt der Standardwert 1000.
+    rating: Option<i32>,
+    /// Optionaler Grund fuer das Protokoll.
+    reason: Option<String>,
+    /// Standard ist true: ein Reset setzt auch Siege/Niederlagen zurueck.
+    reset_stats: Option<bool>,
+}
+
+/// Setzt ein Rating zurueck (nur Admin). Der alte Wert bleibt im Protokoll.
+pub async fn reset_rating(
+    State(pool): State<MySqlPool>,
+    user: CurrentUser,
+    id: Result<Path<String>, PathRejection>,
+    payload: Result<Json<ResetRatingDto>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    user.require_admin()?;
+    let id = path_id(id)?;
+    let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+
+    let target = fetch_rating(&pool, id).await?;
+    let new_rating = dto.rating.unwrap_or(DEFAULT_RATING);
+    if !(MIN_RATING..=MAX_RATING).contains(&new_rating) {
+        return bad(format!(
+            "rating must be between {MIN_RATING} and {MAX_RATING}"
+        ));
+    }
+    let reset_stats = dto.reset_stats.unwrap_or(true);
+    let reason = dto.reason.as_deref().map(str::trim).filter(|r| !r.is_empty());
+    if reason.is_some_and(|r| r.chars().count() > 255) {
+        return bad("reason must not exceed 255 characters".into());
+    }
+
+    let mut tx = pool.begin().await.map_err(internal)?;
+    if reset_stats {
+        sqlx::query(
+            "INSERT INTO player_ratings
+                 (user_id, rating, games_played, wins, losses, draws)
+             VALUES (?, ?, 0, 0, 0, 0)
+             ON DUPLICATE KEY UPDATE
+                 rating = VALUES(rating),
+                 games_played = 0,
+                 wins = 0,
+                 losses = 0,
+                 draws = 0",
+        )
+        .bind(id)
+        .bind(new_rating)
+        .execute(&mut *tx)
+        .await
+        .map_err(internal)?;
+    } else {
+        sqlx::query(
+            "INSERT INTO player_ratings (user_id, rating)
+             VALUES (?, ?)
+             ON DUPLICATE KEY UPDATE rating = VALUES(rating)",
+        )
+        .bind(id)
+        .bind(new_rating)
+        .execute(&mut *tx)
+        .await
+        .map_err(internal)?;
+    }
+
+    sqlx::query(
+        "INSERT INTO rating_resets (user_id, admin_id, old_rating, new_rating, reason)
+         VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(id)
+    .bind(user.id)
+    .bind(target.rating)
+    .bind(new_rating)
+    .bind(reason)
+    .execute(&mut *tx)
+    .await
+    .map_err(internal)?;
+    tx.commit().await.map_err(internal)?;
+
+    Ok(Json(json!(fetch_rating(&pool, id).await?)))
+}
+
+/// Erwartungswert fuer `rating` gegen `opponent` (0..1).
+fn expected_score(rating: i32, opponent: i32) -> f64 {
+    1.0 / (1.0 + 10f64.powf((opponent - rating) as f64 / 400.0))
+}
+
+/// Elo-Aenderung fuer ein Ergebnis (`1` Sieg, `0.5` Remis, `0` Niederlage).
+fn elo_delta(rating: i32, opponent: i32, score: f64) -> i32 {
+    (RATING_K * (score - expected_score(rating, opponent))).round() as i32
+}
+
+fn clamp_rating(value: i32) -> i32 {
+    value.clamp(MIN_RATING, MAX_RATING)
+}
+
+/// Beide neuen Ratings nach einem Ergebnis. Die Summe bleibt erhalten, weil
+/// die Aenderung des einen die Gegenprobe des anderen ist.
+fn rated_result(rating_a: i32, rating_b: i32, score_a: f64) -> (i32, i32) {
+    let delta = elo_delta(rating_a, rating_b, score_a);
+    (clamp_rating(rating_a + delta), clamp_rating(rating_b - delta))
+}
+
+/// Legt bei Bedarf die Rating-Zeile an und sperrt sie fuer die Transaktion.
+async fn lock_rating(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+) -> Result<i32, ApiError> {
+    sqlx::query("INSERT INTO player_ratings (user_id) VALUES (?) ON DUPLICATE KEY UPDATE user_id = user_id")
+        .bind(user_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(internal)?;
+    sqlx::query_scalar::<_, i32>("SELECT rating FROM player_ratings WHERE user_id = ? FOR UPDATE")
+        .bind(user_id)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(internal)
+}
+
+async fn store_rating(
+    tx: &mut Transaction<'_, MySql>,
+    user_id: u64,
+    rating: i32,
+    won: bool,
+    lost: bool,
+    drawn: bool,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE player_ratings
+         SET rating = ?,
+             games_played = games_played + 1,
+             wins = wins + ?,
+             losses = losses + ?,
+             draws = draws + ?
+         WHERE user_id = ?",
+    )
+    .bind(rating)
+    .bind(won as u8)
+    .bind(lost as u8)
+    .bind(drawn as u8)
+    .bind(user_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(internal)?;
+    Ok(())
+}
+
+/// Verbucht ein Ergebnis fuer zwei bekannte Konten. `score_a` ist 1 fuer einen
+/// Sieg von A, 0.5 fuer Remis und 0 fuer eine Niederlage.
+async fn record_rating_result(
+    tx: &mut Transaction<'_, MySql>,
+    user_a: u64,
+    user_b: u64,
+    score_a: f64,
+) -> Result<(), ApiError> {
+    if user_a == user_b {
+        return Ok(());
+    }
+    let rating_a = lock_rating(tx, user_a).await?;
+    let rating_b = lock_rating(tx, user_b).await?;
+    let (new_a, new_b) = rated_result(rating_a, rating_b, score_a);
+
+    let drawn = (score_a - 0.5).abs() < f64::EPSILON;
+    store_rating(tx, user_a, new_a, score_a > 0.5, score_a < 0.5, drawn).await?;
+    store_rating(tx, user_b, new_b, score_a < 0.5, score_a > 0.5, drawn).await?;
+    Ok(())
+}
+
+/// Wertet eine beendete Sitzung aus, sofern beide Plaetze einem Konto gehoeren.
+async fn record_rating_for_players(
+    tx: &mut Transaction<'_, MySql>,
+    players: &[SessionPlayer],
+    outcome: &str,
+    winner_side: Option<&str>,
+) -> Result<(), ApiError> {
+    if outcome != "win" && outcome != "draw" {
+        return Ok(());
+    }
+    let red = player_id_of(players, "red");
+    let yellow = player_id_of(players, "yellow");
+    let (Some(red), Some(yellow)) = (red, yellow) else {
+        return Ok(());
+    };
+    let score_red = if outcome == "draw" {
+        0.5
+    } else if winner_side == Some("red") {
+        1.0
+    } else {
+        0.0
+    };
+    record_rating_result(tx, red, yellow, score_red).await
 }
 
 /* ------------------------------------------------------------------ Sitzungen */
@@ -1036,23 +1314,22 @@ pub async fn surrender_session(
         ));
     }
 
+    let mut tx = pool.begin().await.map_err(internal)?;
+    let players = fetch_players_in(&mut tx, id).await?;
+
     // Der Aufgebende sitzt auf dem Platz, der verliert.
-    let loser = sqlx::query_scalar::<_, String>(
-        "SELECT side FROM game_session_players WHERE session_id = ? AND user_id = ?",
-    )
-    .bind(id)
-    .bind(dto.user_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ApiError::Internal(e.into()))?
-    .ok_or_else(|| {
-        ApiError::BadRequest("Diese Person sitzt in dieser Sitzung nicht am Brett.".into())
-    })?;
+    let loser = players
+        .iter()
+        .find(|player| player.user_id == Some(dto.user_id))
+        .and_then(|player| player.side.clone())
+        .ok_or_else(|| {
+            ApiError::BadRequest("Diese Person sitzt in dieser Sitzung nicht am Brett.".into())
+        })?;
 
     let winner = other_side(&loser)
         .ok_or_else(|| ApiError::Internal(anyhow::anyhow!("unknown side '{loser}'")))?;
 
-    sqlx::query(
+    let finished = sqlx::query(
         "UPDATE game_sessions
          SET outcome = 'win',
              finished_at = UTC_TIMESTAMP(),
@@ -1063,12 +1340,27 @@ pub async fn surrender_session(
                  '$.surrendered_by', ?)
          WHERE id = ? AND outcome IS NULL",
     )
-    .bind(&winner)
+    .bind(winner)
     .bind(dto.user_id)
     .bind(id)
-    .execute(&pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| ApiError::Internal(e.into()))?;
+
+    // Eine parallele Aufgabe hat die Sitzung bereits beendet. Ohne diese
+    // Pruefung wuerde das Rating ein zweites Mal verbucht.
+    if finished.rows_affected() == 0 {
+        return Err(ApiError::Conflict(format!(
+            "session {id} is already finished"
+        )));
+    }
+
+    // Aufgeben ist eine Niederlage fuer den eigenen Platz und ein Sieg fuer
+    // den Gegner. Nur wenn beide Konten bekannt sind, aendert sich das Rating.
+    if let Some(winner_user) = player_id_of(&players, winner) {
+        record_rating_result(&mut tx, winner_user, dto.user_id, 1.0).await?;
+    }
+    tx.commit().await.map_err(internal)?;
 
     Ok(Json(session_json_by_id(&pool, id).await?))
 }
@@ -1309,6 +1601,10 @@ pub async fn record_connect_four_game(
         .map_err(internal)?;
     }
 
+    // Beide Sitzplaetze muessen einem Konto gehoeren; bei Ad-hoc-Partien aus
+    // `/play` sind sie anonym und das Rating bleibt unveraendert.
+    record_rating_for_players(&mut tx, &players, outcome, winner).await?;
+
     tx.commit().await.map_err(internal)?;
 
     Ok((
@@ -1449,6 +1745,172 @@ pub struct ReportFilter {
     status: Option<String>,
     reported_user_id: Option<u64>,
     reporter_id: Option<u64>,
+}
+
+/// Visualisierung der Meldungen.
+///
+/// Admins sehen alle Meldungen, alle anderen nur die Meldungen, an denen sie
+/// selbst beteiligt sind (als Melder oder gemeldete Person). Aggregiert wird
+/// nach Status, Grund und Monat; die Detailroute `/reports` bleibt weiterhin
+/// der Administration vorbehalten.
+pub async fn report_visualisation(
+    State(pool): State<MySqlPool>,
+    user: CurrentUser,
+) -> Result<Json<Value>, ApiError> {
+    let is_admin = user.is_admin();
+    let (by_status, total) = if is_admin {
+        status_counts(
+            &pool,
+            "SELECT status, COUNT(*) FROM player_reports GROUP BY status",
+            None,
+            None,
+        )
+        .await?
+    } else {
+        status_counts(
+            &pool,
+            "SELECT status, COUNT(*) FROM player_reports
+             WHERE reporter_id = ? OR reported_user_id = ?
+             GROUP BY status",
+            Some(user.id),
+            Some(user.id),
+        )
+        .await?
+    };
+
+    let (submitted, _) = status_counts(
+        &pool,
+        "SELECT status, COUNT(*) FROM player_reports WHERE reporter_id = ? GROUP BY status",
+        Some(user.id),
+        None,
+    )
+    .await?;
+    let (received, _) = status_counts(
+        &pool,
+        "SELECT status, COUNT(*) FROM player_reports WHERE reported_user_id = ? GROUP BY status",
+        Some(user.id),
+        None,
+    )
+    .await?;
+
+    let reasons = if is_admin {
+        grouped_counts(
+            &pool,
+            "SELECT reason, COUNT(*) FROM player_reports
+             GROUP BY reason ORDER BY COUNT(*) DESC, reason LIMIT 8",
+            None,
+            None,
+        )
+        .await?
+    } else {
+        grouped_counts(
+            &pool,
+            "SELECT reason, COUNT(*) FROM player_reports
+             WHERE reporter_id = ? OR reported_user_id = ?
+             GROUP BY reason ORDER BY COUNT(*) DESC, reason LIMIT 8",
+            Some(user.id),
+            Some(user.id),
+        )
+        .await?
+    };
+
+    let mut months = if is_admin {
+        grouped_counts(
+            &pool,
+            "SELECT DATE_FORMAT(created_at, '%Y-%m') AS month, COUNT(*)
+             FROM player_reports GROUP BY month ORDER BY month DESC LIMIT 12",
+            None,
+            None,
+        )
+        .await?
+    } else {
+        grouped_counts(
+            &pool,
+            "SELECT DATE_FORMAT(created_at, '%Y-%m') AS month, COUNT(*)
+             FROM player_reports WHERE reporter_id = ? OR reported_user_id = ?
+             GROUP BY month ORDER BY month DESC LIMIT 12",
+            Some(user.id),
+            Some(user.id),
+        )
+        .await?
+    };
+    months.reverse();
+
+    let top_reported = if is_admin {
+        let rows = sqlx::query_as::<_, (u64, String, i64)>(
+            "SELECT r.reported_user_id, u.username, COUNT(*) AS count
+             FROM player_reports r
+             JOIN users u ON u.id = r.reported_user_id
+             GROUP BY r.reported_user_id, u.username
+             ORDER BY count DESC, u.username
+             LIMIT 5",
+        )
+        .fetch_all(&pool)
+        .await
+        .map_err(internal)?;
+        rows.iter()
+            .map(|(id, username, count)| {
+                json!({ "user_id": id, "username": username, "count": count })
+            })
+            .collect::<Vec<Value>>()
+    } else {
+        Vec::new()
+    };
+
+    Ok(Json(json!({
+        "scope": if is_admin { "all" } else { "mine" },
+        "total": total,
+        "by_status": by_status,
+        "submitted": submitted,
+        "received": received,
+        "by_reason": reasons
+            .iter()
+            .map(|(reason, count)| json!({ "reason": reason, "count": count }))
+            .collect::<Vec<Value>>(),
+        "by_month": months
+            .iter()
+            .map(|(month, count)| json!({ "month": month, "count": count }))
+            .collect::<Vec<Value>>(),
+        "top_reported": top_reported,
+    })))
+}
+
+/// Status-Zaehler mit allen vier Status, auch wenn eine Zahl 0 ist.
+async fn status_counts(
+    pool: &MySqlPool,
+    sql: &str,
+    first: Option<u64>,
+    second: Option<u64>,
+) -> Result<(Value, i64), ApiError> {
+    let rows = grouped_counts(pool, sql, first, second).await?;
+    let mut counts = serde_json::Map::new();
+    for status in ["open", "reviewed", "resolved", "dismissed"] {
+        counts.insert(status.to_string(), json!(0));
+    }
+    let mut total = 0;
+    for (status, count) in rows {
+        total += count;
+        counts.insert(status, json!(count));
+    }
+    Ok((Value::Object(counts), total))
+}
+
+/// Zwei Textspalten: Bezeichnung und Anzahl. `first`/`second` fuellen die
+/// Platzhalter in `sql` in dieser Reihenfolge.
+async fn grouped_counts(
+    pool: &MySqlPool,
+    sql: &str,
+    first: Option<u64>,
+    second: Option<u64>,
+) -> Result<Vec<(String, i64)>, ApiError> {
+    let mut query = sqlx::query_as::<_, (String, i64)>(sql);
+    if let Some(value) = first {
+        query = query.bind(value);
+    }
+    if let Some(value) = second {
+        query = query.bind(value);
+    }
+    query.fetch_all(pool).await.map_err(internal)
 }
 
 pub async fn list_reports(
@@ -2108,6 +2570,32 @@ mod tests {
         let future = Utc::now() + chrono::Duration::seconds(30);
         let value = future.format("%Y-%m-%dT%H:%M:%SZ").to_string();
         assert_eq!(elapsed_ms_since(&value), 0);
+    }
+
+    #[test]
+    fn equal_ratings_start_at_fifty_fifty() {
+        assert!((expected_score(1000, 1000) - 0.5).abs() < f64::EPSILON);
+        assert_eq!(elo_delta(1000, 1000, 1.0), 16);
+        assert_eq!(elo_delta(1000, 1000, 0.0), -16);
+        assert_eq!(elo_delta(1000, 1000, 0.5), 0);
+    }
+
+    #[test]
+    fn a_win_against_a_stronger_player_gains_more() {
+        assert!(elo_delta(1000, 1500, 1.0) > elo_delta(1000, 1200, 1.0));
+        assert!(elo_delta(1500, 1000, 1.0) < elo_delta(1200, 1000, 1.0));
+    }
+
+    #[test]
+    fn rated_result_is_zero_sum_and_stays_in_range() {
+        let (winner, loser) = rated_result(1000, 1000, 1.0);
+        assert_eq!(winner, 1016);
+        assert_eq!(loser, 984);
+        assert_eq!(winner + loser, 2000);
+
+        let (top, bottom) = rated_result(MAX_RATING, MIN_RATING, 1.0);
+        assert!(top <= MAX_RATING);
+        assert!(bottom >= MIN_RATING);
     }
 
     #[test]

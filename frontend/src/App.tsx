@@ -6,10 +6,11 @@ import { Notice } from "./components/ui";
 import Catalog from "./Catalog";
 import GameSetup from "./GameSetup";
 import PlayView from "./PlayView";
+import RatingsView from "./RatingsView";
 import ReportsView from "./ReportsView";
 import SessionsView from "./SessionsView";
 import { useAuth } from "./lib/auth";
-import { canManageReports, canViewSessions } from "./lib/permissions";
+import { canViewReports, canViewSessions } from "./lib/permissions";
 import { useNavigate, useRoute } from "./router";
 
 /**
@@ -17,9 +18,10 @@ import { useNavigate, useRoute } from "./router";
  * die Pfade sind in `router.ts` festgelegt.
  *
  * Vor jeder Ansicht steht die Rollenpruefung: `player` kommt nur an Katalog,
- * Spielansicht, eigenes Profil und `/play`; `host` zusaetzlich an die
- * Sitzungsverwaltung; `admin` zusaetzlich an Meldungen. Die API prueft
- * dieselben Regeln noch einmal.
+ * Spielansicht, eigenes Profil, `/play`, die Rangliste und die eigene
+ * Meldungsuebersicht; `host` zusaetzlich an die Sitzungsverwaltung; `admin`
+ * zusaetzlich an die Meldungsverwaltung. Die API prueft dieselben Regeln noch
+ * einmal.
  */
 export const App: React.FC = () => {
   const route = useRoute();
@@ -45,11 +47,13 @@ export const App: React.FC = () => {
         <NoAccess message="Die Sitzungsverwaltung ist Hosts und Admins vorbehalten." />
       );
     case "reports":
-      return canManageReports(user.role) ? (
+      return canViewReports(user.role) ? (
         <ReportsView />
       ) : (
-        <NoAccess message="Meldungen und Benutzerverwaltung sind nur für Admins." />
+        <NoAccess message="Meldungen sind nur für angemeldete Personen sichtbar." />
       );
+    case "ratings":
+      return <RatingsView />;
     case "play":
       return <PlayView />;
     case "camera":
@@ -73,7 +77,7 @@ export const App: React.FC = () => {
             >
               Erlaubt sind <code>/</code>, <code>/games/&lt;name&gt;</code>, <code>/play</code>,{" "}
               <code>/camera</code>, <code>/sessions</code>, <code>/reports</code>,{" "}
-              <code>/profile</code> und <code>/connectfour/&lt;id&gt;</code>.
+              <code>/ratings</code>, <code>/profile</code> und <code>/connectfour/&lt;id&gt;</code>.
             </Notice>
           </main>
         </div>

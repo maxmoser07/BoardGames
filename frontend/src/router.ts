@@ -1,10 +1,12 @@
 /**
- * Minimaler Router – die App hat fünf Ansichten, dafür lohnt keine
+ * Minimaler Router – die App hat wenige Ansichten, dafür lohnt keine
  * zusätzliche Abhängigkeit.
  *
  *   /                    Spielekatalog
  *   /games/:name         Einstellungen eines Spiels
  *   /sessions            Sitzungen und Spielverläufe
+ *   /reports             Meldungen und rollenabhängige Visualisierung
+ *   /ratings             Rangliste der Spieler-Ratings
  *   /play                Partie ohne Sitzung, direkt im Tab
  *   /camera              Physisches Brett per Laptop-Kamera tracken
  *   /connectfour/:id     Spielfeld-Fenster (wird als Pop-up geöffnet)
@@ -19,6 +21,7 @@ export type Route =
   | { name: "setup"; gameName: string }
   | { name: "sessions" }
   | { name: "reports" }
+  | { name: "ratings" }
   | { name: "play" }
   | { name: "camera" }
   | { name: "game"; sessionId: string }
@@ -41,6 +44,7 @@ export function parseRoute(pathname: string): Route {
   if (path === "/profile") return { name: "profile" };
   if (path === "/sessions") return { name: "sessions" };
   if (path === "/reports") return { name: "reports" };
+  if (path === "/ratings") return { name: "ratings" };
   if (path === "/play") return { name: "play" };
   if (path === "/camera") return { name: "camera" };
 

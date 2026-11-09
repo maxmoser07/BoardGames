@@ -41,9 +41,12 @@ import {
   type GameOutcome,
   type GameSession,
   type GameType,
+  type PlayerRating,
   type PlayerReport,
   type RecordedGame,
+  type ReportOverview,
   type ReportStatus,
+  type ResetRatingInput,
   type Side,
   type User,
   type UserRole,
@@ -94,6 +97,10 @@ export interface Api {
   }): Promise<PlayerReport>;
   updateReport(id: number, input: { status?: ReportStatus; adminNote?: string | null; reviewedBy?: number | null }): Promise<PlayerReport>;
   deleteReport(id: number): Promise<void>;
+  getReportOverview(): Promise<ReportOverview>;
+  getRatings(): Promise<PlayerRating[]>;
+  getRating(userId: number): Promise<PlayerRating>;
+  resetRating(userId: number, input?: ResetRatingInput): Promise<PlayerRating>;
   subscribe(listener: () => void): () => void;
 }
 
@@ -182,6 +189,29 @@ interface WireReport {
   created_at: string;
   updated_at: string;
   reviewed_at: string | null;
+}
+
+interface WireReportOverview {
+  scope: "all" | "mine";
+  total: number;
+  by_status: Record<ReportStatus, number>;
+  submitted: Record<ReportStatus, number>;
+  received: Record<ReportStatus, number>;
+  by_reason: Array<{ reason: string; count: number }>;
+  by_month: Array<{ month: string; count: number }>;
+  top_reported: Array<{ user_id: number; username: string; count: number }>;
+}
+
+interface WireRating {
+  user_id: number;
+  username: string;
+  role: UserRole;
+  rating: number;
+  games_played: number;
+  wins: number;
+  losses: number;
+  draws: number;
+  updated_at: string;
 }
 
 /* ---------------------------------------------------------- HTTP-Grundlagen */
@@ -533,6 +563,59 @@ async function deleteReport(id: number): Promise<void> {
   notify();
 }
 
+function toReportOverview(wire: WireReportOverview): ReportOverview {
+  return {
+    scope: wire.scope,
+    total: wire.total,
+    by_status: wire.by_status,
+    submitted: wire.submitted,
+    received: wire.received,
+    by_reason: wire.by_reason,
+    by_month: wire.by_month,
+    top_reported: wire.top_reported,
+  };
+}
+
+async function getReportOverview(): Promise<ReportOverview> {
+  const wire = await request<WireReportOverview>("/reports/visualisation");
+  return toReportOverview(wire);
+}
+
+function toRating(wire: WireRating): PlayerRating {
+  return {
+    userId: wire.user_id,
+    username: wire.username,
+    role: wire.role,
+    rating: wire.rating,
+    gamesPlayed: wire.games_played,
+    wins: wire.wins,
+    losses: wire.losses,
+    draws: wire.draws,
+    updatedAt: wire.updated_at,
+  };
+}
+
+async function getRatings(): Promise<PlayerRating[]> {
+  return (await request<WireRating[]>("/ratings")).map(toRating);
+}
+
+async function getRating(userId: number): Promise<PlayerRating> {
+  return toRating(await request<WireRating>(`/ratings/${encodeURIComponent(String(userId))}`));
+}
+
+async function resetRating(userId: number, input: ResetRatingInput = {}): Promise<PlayerRating> {
+  const wire = await request<WireRating>(`/admin/ratings/${encodeURIComponent(String(userId))}/reset`, {
+    method: "POST",
+    body: JSON.stringify({
+      rating: input.rating,
+      reason: input.reason ?? null,
+      reset_stats: input.resetStats,
+    }),
+  });
+  notify();
+  return toRating(wire);
+}
+
 /* ------------------------------------------------------------ Abonnements */
 
 /**
@@ -593,6 +676,10 @@ export const httpApi: Api = {
   createReport,
   updateReport,
   deleteReport,
+  getReportOverview,
+  getRatings,
+  getRating,
+  resetRating,
   subscribe,
 };
 

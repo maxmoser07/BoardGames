@@ -7,7 +7,8 @@ import { useLiveData } from "./hooks/useLiveData";
 import { api } from "./lib/api";
 import { useAuth } from "./lib/auth";
 import { formatDateTime } from "./lib/format";
-import type { User } from "./types";
+import { formatRating } from "./lib/ratings";
+import type { PlayerRating, User } from "./types";
 
 /**
  * Gespeichertes Profil der angemeldeten Person. Die Kennzahlen werden aus den
@@ -23,6 +24,9 @@ const ProfileView: React.FC = () => {
   );
   const games = useLiveData(() => api.listGames());
   const sessions = useLiveData(() => api.listSessions());
+  const rating = useLiveData<PlayerRating | null>(() =>
+    userId === 0 ? Promise.resolve(null) : api.getRating(userId),
+  );
 
   const stats = useMemo(() => {
     const mine = (games.data ?? []).filter(
@@ -46,8 +50,8 @@ const ProfileView: React.FC = () => {
     };
   }, [userId, games.data, sessions.data]);
 
-  const loading = profile.loading || games.loading || sessions.loading;
-  const loadError = profile.error ?? games.error ?? sessions.error;
+  const loading = profile.loading || games.loading || sessions.loading || rating.loading;
+  const loadError = profile.error ?? games.error ?? sessions.error ?? rating.error;
   const user = profile.data ?? authUser;
 
   return (
@@ -90,6 +94,12 @@ const ProfileView: React.FC = () => {
               <div className="stat">
                 <dt className="stat__value">{stats.hosted}</dt>
                 <dd className="stat__label">gehostet</dd>
+              </div>
+              <div className="stat">
+                <dt className="stat__value">
+                  {rating.data ? formatRating(rating.data.rating) : "–"}
+                </dt>
+                <dd className="stat__label">Rating</dd>
               </div>
             </dl>
           </section>

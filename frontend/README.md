@@ -1,8 +1,9 @@
 # BoardGames – Website
 
 React-/Vite-Oberfläche für Connect-Four-Sitzungen: anmelden, spielen, als Host
-Sitzungen anlegen, als Admin Meldungen und Benutzer verwalten. Die Rechte
-kommen aus derselben Datenbank wie im Backend (`v_user_permissions`).
+Sitzungen anlegen, die eigene Meldungsübersicht ansehen, die Rangliste verfolgen
+und als Admin Meldungen, Ratings und Benutzer verwalten. Die Rechte kommen aus
+derselben Datenbank wie im Backend (`v_user_permissions`).
 
 ```bash
 npm install
@@ -44,8 +45,10 @@ src/
   Catalog.tsx              Spielekatalog unter /
   GameSetup.tsx            Einstellungen unter /games/:name; für player nur der Spielstart
   SessionsView.tsx         Sitzungen und Verläufe unter /sessions (host/admin)
-  ReportsView.tsx          Meldungen unter /reports (admin)
-  ProfileView.tsx          eigenes Profil unter /profile
+  RatingsView.tsx          Rangliste unter /ratings, Admin-Reset pro Person
+  ReportsView.tsx          Meldungs-Visualisierung unter /reports (alle Rollen);
+                           Detailverwaltung nur Admin
+  ProfileView.tsx          eigenes Profil unter /profile inkl. Rating
   GameSessionWindow.tsx    Spielfeld-Fenster unter /connectfour/:id
   PlayView.tsx             Partie ohne Sitzung unter /play
   router.ts                Pfadauflösung ohne Router-Bibliothek
@@ -57,12 +60,15 @@ src/
   index.css                Gestaltung der Oberfläche (Variablen + Komponenten)
   components/              Bausteine: Karten, Kacheln, Auswahl, Anzeigen, Rahmen
     WinOdds.tsx            Balken, Legende und Zugtipp zu den Gewinnchancen
+    ReportVisualisation.tsx Statusbalken, Gründe, Monatsverlauf und Top-Meldungen
   hooks/                   useLiveData, useNow, usePausedTime, usePersistentState,
                            useCameraMoveTracker
   lib/
     api.ts                 interface Api und httpApi – der einzige Datenzugriff
     auth.ts                Bearer-Token, Profil und useAuth
     permissions.ts         Rollenmatrix für Navigation und Bedienelemente
+    ratings.ts             Sortierung, Stufen und Siegquote der Rangliste
+    reportVisuals.ts       Aufbereitung der Status-, Grund- und Monatsdaten
     gameResultEndpoint.ts  ergänzt Sitzungs-Id und Spielzeit beim POST des Hooks
     connectFourOdds.ts     Monte-Carlo-Bewertung einer Stellung
     camera/                Kamera-Bibliothek: Kalibrierung, Erkennung, Zugtracker
@@ -128,6 +134,27 @@ eine vollständige Suche wäre im Browser aber zu teuer. Die Anzeige greift nich
 in Regeln, Zugablauf oder Speicherung ein. `npm test` prüft unter anderem
 sofortige Siege, Blockaden, entschiedene Partien und die Reproduzierbarkeit.
 
+## Rangliste und Rating-Reset
+
+`/ratings` zeigt alle Konten absteigend nach Elo-Wert, mit Siegen, Niederlagen,
+Remis, Siegquote und einer Stufe (Bronze bis Platin). Die Ableitungen liegen in
+`lib/ratings.ts`; die Werte selbst vergibt das Backend nach beendeten Partien.
+
+Admins bekommen pro Zeile „Zurücksetzen“: Das Formular schickt einen Zielwert
+(Standard `1000`, erlaubt `100` bis `4000`) und einen optionalen Grund an
+`POST /api/admin/ratings/{id}/reset`. Die Statistik wird dabei standardmäßig
+zurückgesetzt; der alte Wert bleibt im Reset-Protokoll des Backends. Spieler
+sehen die Rangliste, aber keine Reset-Bedienelemente.
+
+## Meldungs-Visualisierung
+
+`ReportVisualisation` zeigt die Gesamtzahl, die Statusverteilung als gestapelten
+Balken, die häufigsten Gründe, den Monatsverlauf und – nur für Admins – die am
+häufigsten gemeldeten Personen. Die Daten kommen bereits gefiltert aus
+`GET /api/reports/visualisation`: Admins sehen alle Meldungen, alle anderen nur
+Meldungen mit eigener Beteiligung. Die Detailverwaltung darunter wird nur für
+Admins geladen und gerendert.
+
 ## Rollen und Rechte
 
 Die Oberfläche liest die Rolle aus dem angemeldeten Profil (`useAuth`) und
@@ -137,9 +164,15 @@ einmal im Backend (`backend/src/api.rs`).
 
 | Rolle  | Navigation                                      | Darf                                                        |
 | ------ | ----------------------------------------------- | ----------------------------------------------------------- |
-| player | Spiele, Direkt spielen, Profil                  | nur spielen; `/games/:name` zeigt keinen Sitzungs-Editor    |
+| player | Spiele, Direkt spielen, Meldungen, Rangliste, Profil | spielen; eigene Meldungsbeteiligungen und Rangliste lesen |
 | host   | zusätzlich Sitzungen                            | eigene Sitzungen anlegen, pausieren, fortsetzen, beenden     |
-| admin  | zusätzlich Meldungen                            | alles, auch fremde Sitzungen, Benutzer und Beispieldaten     |
+| admin  | zusätzlich Meldungsverwaltung                   | alles, auch fremde Sitzungen, Ratings, Meldungen und Benutzer |
+
+Die Meldungsseite ist für alle angemeldeten Rollen sichtbar. Spieler sehen dort
+nur Aggregatzahlen zu Meldungen, die sie selbst geschrieben haben oder in denen
+sie gemeldet wurden; die Detailroute `/api/reports` und die Verwaltungsknöpfe
+bleiben Admins vorbehalten. Admins sehen auf `/ratings` pro Person einen
+Inline-Reset mit Zielwert und optionalem Grund.
 
 Ein gesperrtes Konto darf lesen, aber nicht schreiben. Die Anmeldung liegt in
 `lib/auth.ts`: Login und Registrierung speichern Token und Profil, `api.ts`
@@ -153,8 +186,9 @@ schickt `Authorization: Bearer …` mit und meldet bei `401` lokal ab.
 | `/`                | Spielekatalog – eine Kachel je Spiel                       | angemeldet                 |
 | `/games/:name`     | Einstellungen (host/admin) bzw. Spielstart (player)        | angemeldet                 |
 | `/sessions`        | Sitzungen und Spielverläufe über alle Spiele               | host/admin                 |
-| `/reports`         | Meldungen                                                  | admin                      |
-| `/profile`         | eigenes Profil                                             | angemeldet                 |
+| `/ratings`         | Rangliste, eigenes Rating und Admin-Reset                  | angemeldet                 |
+| `/reports`         | Meldungs-Visualisierung; Detailverwaltung für Admins        | angemeldet                 |
+| `/profile`         | eigenes Profil inkl. Rating                                | angemeldet                 |
 | `/play`            | Brett direkt im Tab, ohne Sitzung                           | angemeldet                 |
 | `/connectfour/:id` | Spielfeld-Fenster, wird per `window.open` als Pop-up geöffnet | Mitwirkende, Host, Admin   |
 
@@ -232,9 +266,17 @@ Oberfläche ruft ausschließlich `api` auf.
 | POST    | `/api/sessions/{id}/resume`    | `resumeSession`         | dito        |
 | POST    | `/api/sessions/{id}/abort`     | `abortSession`          | dito        |
 | POST    | `/api/sessions/{id}/surrender` | `surrenderSession`      | dito        |
-| POST    | `/api/connect-four/games`      | `recordConnectFourGame` | `game_sessions`, `moves` |
+| POST    | `/api/connect-four/games`      | `recordConnectFourGame` | `game_sessions`, `moves`, `player_ratings` |
 | GET     | `/api/connect-four/games`      | `listGames`             | dito        |
 | DELETE  | `/api/demo-data`               | `clearDemoData`         | dito        |
+| GET     | `/api/ratings`                 | `getRatings`            | `users`, `player_ratings` |
+| GET     | `/api/ratings/{id}`            | `getRating`             | dito        |
+| POST    | `/api/admin/ratings/{id}/reset` | `resetRating`          | `player_ratings`, `rating_resets` |
+| GET     | `/api/reports`                 | `getReports`            | `player_reports` (nur Admin) |
+| POST    | `/api/reports`                 | `createReport`          | `player_reports` (nur Admin) |
+| PATCH   | `/api/reports/{id}`            | `updateReport`          | dito        |
+| DELETE  | `/api/reports/{id}`            | `deleteReport`          | dito        |
+| GET     | `/api/reports/visualisation`   | `getReportOverview`     | `player_reports`, `users` |
 
 Drei Punkte, an denen Frontend und Backend sich verstehen müssen:
 

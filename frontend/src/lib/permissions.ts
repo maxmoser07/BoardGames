@@ -22,7 +22,15 @@ export function canViewSessions(role: UserRole | undefined): boolean {
   return canCreateSessions(role);
 }
 
-/** Meldungen und Benutzerverwaltung sind reine Admin-Aufgaben. */
+/**
+ * Die Visualisierung der Meldungen ist fuer alle angemeldeten Rollen gedacht.
+ * Spieler sehen dort nur die Meldungen, an denen sie selbst beteiligt sind.
+ */
+export function canViewReports(role: UserRole | undefined): boolean {
+  return role !== undefined;
+}
+
+/** Pruefen, kommentieren und loeschen duerfen nur Admins. */
 export function canManageReports(role: UserRole | undefined): boolean {
   return role === "admin";
 }

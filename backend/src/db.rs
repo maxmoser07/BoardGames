@@ -102,6 +102,21 @@ pub struct SessionPlayer {
     pub side: Option<String>,
 }
 
+/// Zeile aus `player_ratings`, ergaenzt um Name und Rolle aus `users`.
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PlayerRating {
+    pub user_id: u64,
+    pub username: String,
+    pub role: String,
+    pub rating: i32,
+    pub games_played: u32,
+    pub wins: u32,
+    pub losses: u32,
+    pub draws: u32,
+    /// `2026-11-09T12:00:00Z`.
+    pub updated_at: String,
+}
+
 /// Zeile aus `player_reports`.
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct PlayerReport {
