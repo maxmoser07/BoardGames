@@ -55,13 +55,16 @@ src/
   ConnectFour.css          Gestaltung des Bretts
   index.css                Gestaltung der Oberfläche (Variablen + Komponenten)
   components/              Bausteine: Karten, Kacheln, Auswahl, Anzeigen, Rahmen
-  hooks/                   useLiveData, useNow, usePausedTime, usePersistentState
+  hooks/                   useLiveData, useNow, usePausedTime, usePersistentState,
+                           useCameraMoveTracker
   lib/
     api.ts                 interface Api und httpApi – der einzige Datenzugriff
     auth.ts                Bearer-Token, Profil und useAuth
     permissions.ts         Rollenmatrix für Navigation und Bedienelemente
     gameResultEndpoint.ts  ergänzt Sitzungs-Id und Spielzeit beim POST des Hooks
+    camera/                Kamera-Bibliothek: Kalibrierung, Erkennung, Zugtracker
 scripts/logic.test.ts      Tests für die reine Logik (npm test)
+scripts/camera.test.ts     Tests für Geometrie, Farben, Detektor und Tracker
 ```
 
 Der Katalog in `lib/gameTypes.ts` listet Connect Four als spielbar und fünf
@@ -219,6 +222,65 @@ Pausenzustand gehört deshalb nach `metadata_json` (`paused_at`, `paused_ms`).
 `GET /api/sessions` liefert nur gehostete Sitzungen. Partien aus `/play`
 bekommen eine eigene Zeile mit `metadata_json.ad_hoc` und tauchen deshalb nicht
 im Dashboard der Sitzungen auf, sondern unter „Partien ohne Sitzung“.
+
+## Kamera-Bibliothek
+
+`src/lib/camera/` erkennt Züge auf einem physischen Brett über die Webcam. Die
+Bibliothek ist in drei Schichten geteilt:
+
+* `CameraCapture` holt den Stream und liefert einzelne Frames als `PixelSource`.
+* `ConnectFourDetector` liest die Zellmitten anhand von vier kalibrierten Ecken
+  und klassifiziert Rot/Gelb/Leer über den Farbton.
+* `MoveTracker` vergleicht aufeinanderfolgende Brettzustände und erzeugt
+  `TrackedMove`s. Er bestätigt Änderungen über mehrere Frames, ignoriert
+  schwebende Steine und erkennt einen geleerten Spielstand als Reset.
+
+Schnellstart:
+
+```ts
+import { createConnectFourCamera } from "./lib/camera";
+
+const camera = createConnectFourCamera({
+  calibration: { topLeft, topRight, bottomRight, bottomLeft },
+  onMove: (move) => console.log(move.turn, move.side, move.location),
+});
+
+await camera.start(videoElement); // videoElement ist ein <video> in der Oberfläche
+// ...
+camera.stop();
+```
+
+Die vier Ecken werden im **Video-Koordinatensystem** erwartet und beschreiben
+die äußeren Kanten des 6×7-Rasters, nicht den Rahmen des Bretts. Wer sie per
+Klick in einer per CSS verkleinerten Vorschau setzt, rechnet sie mit
+`scaleCorners` um. Für eine fest auf das Brett gerichtete Kamera reicht
+`cornersFromRect`. Steht die Kamera auf der gegenüberliegenden Seite des
+Bretts, spiegeln `flipX`/`flipY` in den Detektor-Optionen das erkannte Raster.
+
+Die erkannten Züge lassen sich am Partieende direkt an die bestehende API
+geben:
+
+```ts
+import { toConnectFourMoves, winnerOf } from "./lib/camera";
+
+const winner = winnerOf(camera.tracker.board);
+if (winner !== null) {
+  await api.recordConnectFourGame(
+    { moves: toConnectFourMoves(camera.tracker.moves), winner },
+    context,
+  );
+}
+```
+
+Für React gibt es `useCameraMoveTracker` in `src/hooks/`. Der Hook liefert
+`videoRef`, Status, Brett und Züge und räumt den Stream beim Unmount auf.
+
+Die Erkennung ist bewusst konservativ: Sie liest nur die Zellmitten, braucht
+eine feste Kamera und eine einmalige Kalibrierung. Bei starkem Gegenlicht,
+bewegter Kamera oder einem Brett mit hellen, leeren Feldern müssen die
+Schwellwerte in `ConnectFourDetectorOptions.thresholds` angepasst werden.
+`npm test` prüft Geometrie, Farbklassifikation, Detektor und Tracker mit
+synthetischen Bildern – ohne Browser und ohne Kamera.
 
 ## Spielverläufe prüfen
 
