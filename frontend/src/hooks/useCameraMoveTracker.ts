@@ -13,6 +13,7 @@ import { CameraMoveTracker } from "../lib/camera/cameraTracker";
 import { emptyBoard } from "../lib/camera/connectFour";
 import type {
   BoardCorners,
+  BoardObservation,
   BoardState,
   CameraMoveTrackerOptions,
   TrackerEvent,
@@ -27,6 +28,8 @@ export interface UseCameraMoveTrackerResult {
   error: string | null;
   board: BoardState;
   moves: TrackedMove[];
+  /** Letzte ausgewertete Beobachtung, inkl. Konfidenz – `null` vor dem ersten Frame. */
+  observation: BoardObservation | null;
   start: () => Promise<void>;
   stop: () => void;
   reset: () => void;
@@ -44,6 +47,7 @@ export function useCameraMoveTracker(
   const [error, setError] = useState<string | null>(null);
   const [board, setBoard] = useState<BoardState>(() => emptyBoard(options.layout));
   const [moves, setMoves] = useState<TrackedMove[]>([]);
+  const [observation, setObservation] = useState<BoardObservation | null>(null);
 
   useEffect(() => {
     optionsRef.current = options;
@@ -51,10 +55,13 @@ export function useCameraMoveTracker(
 
   const handleEvent = useCallback((event: TrackerEvent) => {
     setBoard(event.board);
-    if (event.type === "move") {
+    if (event.type === "update") {
+      setObservation(event.observation);
+    } else if (event.type === "move") {
       setMoves((current) => [...current, event.move]);
     } else if (event.type === "reset") {
       setMoves([]);
+      setObservation(null);
     }
   }, []);
 
@@ -96,6 +103,7 @@ export function useCameraMoveTracker(
     trackerRef.current?.reset();
     setBoard(emptyBoard(optionsRef.current.layout));
     setMoves([]);
+    setObservation(null);
   }, []);
 
   const calibrate = useCallback((corners: BoardCorners): void => {
@@ -110,5 +118,5 @@ export function useCameraMoveTracker(
     [],
   );
 
-  return { videoRef, status, error, board, moves, start, stop, reset, calibrate };
+  return { videoRef, status, error, board, moves, observation, start, stop, reset, calibrate };
 }

@@ -51,6 +51,7 @@ describe("Router", () => {
     assert.deepEqual(parseRoute("/sessions"), { name: "sessions" });
     assert.deepEqual(parseRoute("/sessions/"), { name: "sessions" });
     assert.deepEqual(parseRoute("/play"), { name: "play" });
+    assert.deepEqual(parseRoute("/camera"), { name: "camera" });
   });
 
   it("erkennt die Einstellungsseite eines Spiels", () => {

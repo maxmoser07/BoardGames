@@ -1,6 +1,7 @@
 import { GameSessionWindow } from "./GameSessionWindow";
 import LoginView from "./LoginView";
 import ProfileView from "./ProfileView";
+import CameraView from "./CameraView";
 import { Notice } from "./components/ui";
 import Catalog from "./Catalog";
 import GameSetup from "./GameSetup";
@@ -51,6 +52,8 @@ export const App: React.FC = () => {
       );
     case "play":
       return <PlayView />;
+    case "camera":
+      return <CameraView />;
     case "game":
       // `key` sorgt dafür, dass beim Wechsel auf eine andere Sitzung das Brett
       // neu aufgebaut wird (Zustand liegt in useConnectFour).
@@ -69,8 +72,8 @@ export const App: React.FC = () => {
               }
             >
               Erlaubt sind <code>/</code>, <code>/games/&lt;name&gt;</code>, <code>/play</code>,{" "}
-              <code>/sessions</code>, <code>/reports</code>, <code>/profile</code> und{" "}
-              <code>/connectfour/&lt;id&gt;</code>.
+              <code>/camera</code>, <code>/sessions</code>, <code>/reports</code>,{" "}
+              <code>/profile</code> und <code>/connectfour/&lt;id&gt;</code>.
             </Notice>
           </main>
         </div>

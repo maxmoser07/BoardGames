@@ -35,6 +35,7 @@ export {
   cellSizeAt,
   cornersFromRect,
   createHomography,
+  flipCorners,
   scaleCorners,
 } from "./geometry.ts";
 export type { Homography } from "./geometry.ts";

@@ -1,0 +1,303 @@
+/* =============================================================================
+   Kamera-Tracking – Vorschau, Kalibrierraster und erkanntes Brett.
+   Die Farben und Abstände kommen aus index.css; das Brett selbst bleibt eine
+   reine Anzeige, gespielt wird auf dem physischen Brett.
+   ========================================================================== */
+
+.camera-head__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.camera-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(20rem, 0.8fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.camera-panel,
+.camera-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+/* --------------------------------------------------------------- Kamerabild */
+
+.camera-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  background: #05070d;
+}
+
+.camera-stage__video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #05070d;
+}
+
+.camera-stage__overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.camera-stage__placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 1.5rem;
+  text-align: center;
+  color: #cbd5e1;
+  background: color-mix(in srgb, #05070d 82%, transparent);
+}
+
+.camera-stage__placeholder p {
+  font-weight: 700;
+}
+
+.camera-stage__placeholder span {
+  max-width: 34ch;
+  font-size: 0.82rem;
+  color: #94a3b8;
+}
+
+.camera-corner {
+  position: absolute;
+  z-index: 2;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  padding: 0;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow:
+    0 0 0 2px rgba(0, 0, 0, 0.45),
+    var(--shadow-sm);
+  cursor: grab;
+  touch-action: none;
+}
+
+.camera-corner:active {
+  cursor: grabbing;
+  transform: scale(1.12);
+}
+
+.camera-corner:focus-visible {
+  outline: 3px solid #ffffff;
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------ Kalibrierung */
+
+.camera-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.camera-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.camera-status::before {
+  content: "";
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.camera-status--running,
+.camera-status--live {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.camera-status--starting,
+.camera-status--paused {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.camera-status--error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.camera-orientation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.camera-orientation label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+}
+
+.camera-orientation span {
+  color: var(--text-dim);
+}
+
+.camera-hint {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+
+/* ---------------------------------------------------------- Erkanntes Brett */
+
+.camera-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.camera-board {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: clamp(0.2rem, 1vw, 0.45rem);
+  width: 100%;
+  aspect-ratio: 7 / 6;
+  padding: clamp(0.35rem, 1.4vw, 0.7rem);
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, var(--accent-strong), var(--accent));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -2px 6px rgba(0, 0, 0, 0.25),
+    var(--shadow-md);
+}
+
+.camera-board__cell {
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-dim) 26%, transparent);
+  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.35);
+}
+
+.camera-board__cell.red {
+  background: radial-gradient(
+    circle at 34% 28%,
+    #ff9a9a 0%,
+    var(--red) 55%,
+    color-mix(in srgb, var(--red) 78%, #000) 100%
+  );
+}
+
+.camera-board__cell.yellow {
+  background: radial-gradient(
+    circle at 34% 28%,
+    #ffe08a 0%,
+    var(--yellow) 55%,
+    color-mix(in srgb, var(--yellow) 78%, #000) 100%
+  );
+}
+
+.camera-turn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+  font-weight: 650;
+}
+
+.camera-dot {
+  display: inline-block;
+  flex: none;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+}
+
+.camera-dot--red {
+  background: var(--red);
+}
+
+.camera-dot--yellow {
+  background: var(--yellow);
+}
+
+/* ------------------------------------------------------------- Zugliste */
+
+.camera-moves__title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.camera-moves {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-height: 15rem;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.camera-move {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem 0.75rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.camera-move__side {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+@media (max-width: 900px) {
+  .camera-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

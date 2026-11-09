@@ -13,6 +13,7 @@ import {
   cellCenter,
   cornersFromRect,
   createHomography,
+  flipCorners,
   scaleCorners,
 } from "../src/lib/camera/geometry.ts";
 import { MoveTracker } from "../src/lib/camera/moveTracker.ts";
@@ -109,6 +110,24 @@ describe("Kamera-Geometrie", () => {
     );
     assert.deepEqual(scaled.topLeft, { x: 10, y: 20 });
     assert.deepEqual(scaled.bottomRight, { x: 40, y: 60 });
+  });
+
+  it("spiegelt Ecken für die Kamerarichtung", () => {
+    const corners = cornersFromRect({ x: 10, y: 20, width: 100, height: 50 });
+
+    const mirroredX = flipCorners(corners, true, false);
+    assert.deepEqual(mirroredX.topLeft, corners.topRight);
+    assert.deepEqual(mirroredX.topRight, corners.topLeft);
+    assert.deepEqual(mirroredX.bottomRight, corners.bottomLeft);
+
+    const mirroredY = flipCorners(corners, false, true);
+    assert.deepEqual(mirroredY.topLeft, corners.bottomLeft);
+    assert.deepEqual(mirroredY.bottomLeft, corners.topLeft);
+    assert.deepEqual(mirroredY.bottomRight, corners.topRight);
+
+    const rotated = flipCorners(corners, true, true);
+    assert.deepEqual(rotated.topLeft, corners.bottomRight);
+    assert.deepEqual(rotated.bottomRight, corners.topLeft);
   });
 });
 

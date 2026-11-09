@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { CircleUser, Flag, History, LayoutGrid, Play, ShieldCheck } from "lucide-react";
+import { Camera, CircleUser, Flag, History, LayoutGrid, Play, ShieldCheck } from "lucide-react";
 
 import { api } from "../lib/api";
 import { signOut, useAuth } from "../lib/auth";
@@ -9,7 +9,7 @@ import { useNavigate } from "../router";
 import type { UserRole } from "../types";
 import { Logo } from "./Logo";
 
-export type ShellSection = "catalog" | "play" | "sessions" | "reports" | "profile";
+export type ShellSection = "catalog" | "play" | "camera" | "sessions" | "reports" | "profile";
 
 interface AppShellProps {
   /** Welcher Navigationspunkt aktiv ist. */
@@ -20,6 +20,7 @@ interface AppShellProps {
 const NAV = [
   { path: "/", label: "Spiele", icon: LayoutGrid, match: "catalog", visible: () => true },
   { path: "/play", label: "Direkt spielen", icon: Play, match: "play", visible: () => true },
+  { path: "/camera", label: "Kamera", icon: Camera, match: "camera", visible: () => true },
   {
     path: "/sessions",
     label: "Sitzungen",

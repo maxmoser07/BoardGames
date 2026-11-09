@@ -6,6 +6,7 @@
  *   /games/:name         Einstellungen eines Spiels
  *   /sessions            Sitzungen und Spielverläufe
  *   /play                Partie ohne Sitzung, direkt im Tab
+ *   /camera              Physisches Brett per Laptop-Kamera tracken
  *   /connectfour/:id     Spielfeld-Fenster (wird als Pop-up geöffnet)
  */
 
@@ -19,6 +20,7 @@ export type Route =
   | { name: "sessions" }
   | { name: "reports" }
   | { name: "play" }
+  | { name: "camera" }
   | { name: "game"; sessionId: string }
   | { name: "notFound"; path: string };
 
@@ -40,6 +42,7 @@ export function parseRoute(pathname: string): Route {
   if (path === "/sessions") return { name: "sessions" };
   if (path === "/reports") return { name: "reports" };
   if (path === "/play") return { name: "play" };
+  if (path === "/camera") return { name: "camera" };
 
   const setup = /^\/games\/([A-Za-z0-9_-]+)$/.exec(path);
   if (setup) return { name: "setup", gameName: setup[1] };

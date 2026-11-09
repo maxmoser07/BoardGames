@@ -235,7 +235,20 @@ Bibliothek ist in drei Schichten geteilt:
   `TrackedMove`s. Er bestätigt Änderungen über mehrere Frames, ignoriert
   schwebende Steine und erkennt einen geleerten Spielstand als Reset.
 
-Schnellstart:
+In der Oberfläche liegt die fertige Ansicht unter **`/camera`** (Navigation
+„Kamera“). Sie startet die eingebaute Laptop-Kamera, blendet ein 6×7-Raster über
+das Bild und lässt die vier Ecken per Pointer verschieben. Nach „Kalibrierung
+übernehmen“ zählt die App neue Steine, zeigt Brett, Zugliste und Sieger an und
+speichert die Partie über `api.recordConnectFourGame` als Partie ohne Sitzung.
+Die Vorschau wird bewusst nicht gespiegelt, damit Kalibrierung und Erkennung
+dieselben Pixel benutzen. Für eine Kamera auf der gegenüberliegenden Brettseite
+gibt es die X/Y-Spiegelung in der Kalibrierung.
+
+> Der Browser gibt die Kamera nur in einem sicheren Kontext frei. Lokal ist das
+> über `http://localhost:5173` der Fall; für eine andere Adresse braucht die
+> Instanz HTTPS (siehe Hinweis in der Ansicht).
+
+Schnellstart der Bibliothek:
 
 ```ts
 import { createConnectFourCamera } from "./lib/camera";

@@ -117,3 +117,26 @@ export function scaleCorners(corners: BoardCorners, scaleX: number, scaleY: numb
     bottomLeft: scale(corners.bottomLeft),
   };
 }
+
+/**
+ * Spiegelt die vier Ecken für die Sichtrichtung der Kamera.
+ *
+ * `flipX` tauscht links/rechts, `flipY` oben/unten. Das Bild selbst bleibt
+ * unverändert; nur die Zuordnung Bild -> Brett wird gedreht. So kann dieselbe
+ * Kalibrierung für eine Kamera auf der gegenüberliegenden Brettseite genutzt
+ * werden.
+ */
+export function flipCorners(corners: BoardCorners, flipX = false, flipY = false): BoardCorners {
+  let { topLeft, topRight, bottomRight, bottomLeft } = corners;
+
+  if (flipX) {
+    [topLeft, topRight] = [topRight, topLeft];
+    [bottomLeft, bottomRight] = [bottomRight, bottomLeft];
+  }
+  if (flipY) {
+    [topLeft, bottomLeft] = [bottomLeft, topLeft];
+    [topRight, bottomRight] = [bottomRight, topRight];
+  }
+
+  return { topLeft, topRight, bottomRight, bottomLeft };
+}
