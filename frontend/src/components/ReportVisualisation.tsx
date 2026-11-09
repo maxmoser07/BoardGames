@@ -1,4 +1,4 @@
-import { AlertTriangle, Flag, ShieldCheck, Users } from "lucide-react";
+import { AlertTriangle, Flag, Users } from "lucide-react";
 
 import {
   REPORT_STATUS_LABEL,
@@ -19,17 +19,11 @@ const STATUS_TONE: Record<ReportStatus, string> = {
 };
 
 /**
- * Visualisierung der Meldungen: Statusverteilung, Gruende, Verlauf und – fuer
- * Admins – die am haeufigsten gemeldeten Personen. Die Daten kommen bereits
- * rollenabhaengig gefiltert aus `GET /api/reports/visualisation`.
+ * Visualisierung der Meldungen: Statusverteilung, Gruende, Verlauf und die am
+ * haeufigsten gemeldeten Personen. Die Ansicht ist der Administration
+ * vorbehalten; die Daten kommen aus `GET /api/reports/visualisation`.
  */
-export function ReportVisualisation({
-  overview,
-  isAdmin,
-}: {
-  overview: ReportOverview;
-  isAdmin: boolean;
-}) {
+export function ReportVisualisation({ overview }: { overview: ReportOverview }) {
   const total = overview.total || countTotal(overview.by_status);
   const segments = statusSegments(overview.by_status).filter((segment) => segment.count > 0);
   const reasonMax = Math.max(1, ...overview.by_reason.map((row) => row.count));
@@ -48,12 +42,10 @@ export function ReportVisualisation({
         </span>
         <div>
           <h2 className="panel__title" id="panel-report-visualisation">
-            {isAdmin ? "Meldungen im Überblick" : "Deine Meldungen im Überblick"}
+            Meldungen im Überblick
           </h2>
           <p className="panel__subtitle">
-            {isAdmin
-              ? "Alle Meldungen nach Status, Grund und zeitlichem Verlauf."
-              : "Meldungen, die du geschrieben hast oder in denen du gemeldet wurdest."}
+            Alle Meldungen nach Status, Grund und zeitlichem Verlauf.
           </p>
         </div>
       </header>
@@ -61,7 +53,7 @@ export function ReportVisualisation({
       <dl className="viz__stats">
         <div className="stat">
           <dt className="stat__value">{total}</dt>
-          <dd className="stat__label">{isAdmin ? "Meldungen" : "beteiligt"}</dd>
+          <dd className="stat__label">Meldungen</dd>
         </div>
         <div className="stat">
           <dt className="stat__value">{open}</dt>
@@ -83,9 +75,7 @@ export function ReportVisualisation({
 
       {total === 0 ? (
         <EmptyState icon={AlertTriangle} title="Noch keine Meldungen">
-          {isAdmin
-            ? "Sobald Meldungen eingehen, erscheinen hier die Verteilungen."
-            : "Für dich liegen aktuell keine Meldungen vor."}
+          Sobald Meldungen eingehen, erscheinen hier die Verteilungen.
         </EmptyState>
       ) : (
         <>
@@ -178,7 +168,7 @@ export function ReportVisualisation({
             </div>
           </div>
 
-          {isAdmin && overview.top_reported.length > 0 ? (
+          {overview.top_reported.length > 0 ? (
             <div className="viz__block">
               <div className="viz__head">
                 <h3 className="viz__title">Am häufigsten gemeldet</h3>
@@ -198,14 +188,6 @@ export function ReportVisualisation({
                 ))}
               </ol>
             </div>
-          ) : null}
-
-          {!isAdmin ? (
-            <p className="viz__note">
-              <ShieldCheck aria-hidden="true" size={14} />
-              Meldungen werden von der Administration geprüft. Aus Datenschutzgründen
-              siehst du nur Meldungen mit deiner Beteiligung.
-            </p>
           ) : null}
         </>
       )}

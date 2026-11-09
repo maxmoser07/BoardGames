@@ -1,9 +1,9 @@
 # BoardGames – Website
 
 React-/Vite-Oberfläche für Connect-Four-Sitzungen: anmelden, spielen, als Host
-Sitzungen anlegen, die eigene Meldungsübersicht ansehen, die Rangliste verfolgen
-und als Admin Meldungen, Ratings und Benutzer verwalten. Die Rechte kommen aus
-derselben Datenbank wie im Backend (`v_user_permissions`).
+Sitzungen anlegen und die Rangliste einsehen. Spieler:innen sehen ihr eigenes
+Rating; Admins verwalten zusätzlich Meldungen, Ratings und Benutzer. Die Rechte
+kommen aus derselben Datenbank wie im Backend (`v_user_permissions`).
 
 ```bash
 npm install
@@ -45,9 +45,8 @@ src/
   Catalog.tsx              Spielekatalog unter /
   GameSetup.tsx            Einstellungen unter /games/:name; für player nur der Spielstart
   SessionsView.tsx         Sitzungen und Verläufe unter /sessions (host/admin)
-  RatingsView.tsx          Rangliste unter /ratings, Admin-Reset pro Person
-  ReportsView.tsx          Meldungs-Visualisierung unter /reports (alle Rollen);
-                           Detailverwaltung nur Admin
+  RatingsView.tsx          eigenes Rating bzw. Rangliste, Admin-Reset pro Person
+  ReportsView.tsx          Meldungs-Visualisierung und Verwaltung (admin)
   ProfileView.tsx          eigenes Profil unter /profile inkl. Rating
   GameSessionWindow.tsx    Spielfeld-Fenster unter /connectfour/:id
   PlayView.tsx             Partie ohne Sitzung unter /play
@@ -136,24 +135,24 @@ sofortige Siege, Blockaden, entschiedene Partien und die Reproduzierbarkeit.
 
 ## Rangliste und Rating-Reset
 
-`/ratings` zeigt alle Konten absteigend nach Elo-Wert, mit Siegen, Niederlagen,
-Remis, Siegquote und einer Stufe (Bronze bis Platin). Die Ableitungen liegen in
-`lib/ratings.ts`; die Werte selbst vergibt das Backend nach beendeten Partien.
+`/ratings` zeigt für Hosts und Admins alle Konten absteigend nach Elo-Wert, mit
+Siegen, Niederlagen, Remis, Siegquote und einer Stufe (Bronze bis Platin).
+Reguläre Spieler:innen sehen dort ausschließlich ihr eigenes Rating, die
+zugehörige Stufe und ihre Statistik. Die Ableitungen liegen in `lib/ratings.ts`;
+die Werte selbst vergibt das Backend nach beendeten Partien.
 
 Admins bekommen pro Zeile „Zurücksetzen“: Das Formular schickt einen Zielwert
 (Standard `1000`, erlaubt `100` bis `4000`) und einen optionalen Grund an
 `POST /api/admin/ratings/{id}/reset`. Die Statistik wird dabei standardmäßig
-zurückgesetzt; der alte Wert bleibt im Reset-Protokoll des Backends. Spieler
-sehen die Rangliste, aber keine Reset-Bedienelemente.
+zurückgesetzt; der alte Wert bleibt im Reset-Protokoll des Backends. Hosts sehen
+die Rangliste, aber keine Reset-Bedienelemente.
 
 ## Meldungs-Visualisierung
 
 `ReportVisualisation` zeigt die Gesamtzahl, die Statusverteilung als gestapelten
-Balken, die häufigsten Gründe, den Monatsverlauf und – nur für Admins – die am
-häufigsten gemeldeten Personen. Die Daten kommen bereits gefiltert aus
-`GET /api/reports/visualisation`: Admins sehen alle Meldungen, alle anderen nur
-Meldungen mit eigener Beteiligung. Die Detailverwaltung darunter wird nur für
-Admins geladen und gerendert.
+Balken, die häufigsten Gründe, den Monatsverlauf und die am häufigsten
+gemeldeten Personen. Die Ansicht ist der Administration vorbehalten; die Daten
+kommen aus `GET /api/reports/visualisation` und werden nur für Admins geladen.
 
 ## Rollen und Rechte
 
@@ -164,15 +163,16 @@ einmal im Backend (`backend/src/api.rs`).
 
 | Rolle  | Navigation                                      | Darf                                                        |
 | ------ | ----------------------------------------------- | ----------------------------------------------------------- |
-| player | Spiele, Direkt spielen, Meldungen, Rangliste, Profil | spielen; eigene Meldungsbeteiligungen und Rangliste lesen |
-| host   | zusätzlich Sitzungen                            | eigene Sitzungen anlegen, pausieren, fortsetzen, beenden     |
+| player | Spiele, Direkt spielen, Mein Rating, Profil     | spielen und das eigene Rating sehen                          |
+| host   | zusätzlich Sitzungen, Kamera, Rangliste         | eigene Sitzungen anlegen, pausieren, fortsetzen, beenden     |
 | admin  | zusätzlich Meldungsverwaltung                   | alles, auch fremde Sitzungen, Ratings, Meldungen und Benutzer |
 
-Die Meldungsseite ist für alle angemeldeten Rollen sichtbar. Spieler sehen dort
-nur Aggregatzahlen zu Meldungen, die sie selbst geschrieben haben oder in denen
-sie gemeldet wurden; die Detailroute `/api/reports` und die Verwaltungsknöpfe
-bleiben Admins vorbehalten. Admins sehen auf `/ratings` pro Person einen
-Inline-Reset mit Zielwert und optionalem Grund.
+Die Meldungsseite ist ausschließlich für Admins sichtbar; Spieler:innen und
+Hosts bekommen dort eine Kein-Zugriff-Meldung. Admins sehen auf `/ratings` pro
+Person einen Inline-Reset mit Zielwert und optionalem Grund. Die vollständige
+Rangliste ist Hosts und Admins vorbehalten, Spieler:innen sehen nur ihr eigenes
+Rating. Die Kamera-/Brettverfolgung unter `/camera` ist ebenfalls auf Hosts und
+Admins beschränkt.
 
 Ein gesperrtes Konto darf lesen, aber nicht schreiben. Die Anmeldung liegt in
 `lib/auth.ts`: Login und Registrierung speichern Token und Profil, `api.ts`
@@ -186,8 +186,9 @@ schickt `Authorization: Bearer …` mit und meldet bei `401` lokal ab.
 | `/`                | Spielekatalog – eine Kachel je Spiel                       | angemeldet                 |
 | `/games/:name`     | Einstellungen (host/admin) bzw. Spielstart (player)        | angemeldet                 |
 | `/sessions`        | Sitzungen und Spielverläufe über alle Spiele               | host/admin                 |
-| `/ratings`         | Rangliste, eigenes Rating und Admin-Reset                  | angemeldet                 |
-| `/reports`         | Meldungs-Visualisierung; Detailverwaltung für Admins        | angemeldet                 |
+| `/camera`          | Kamera-/Brettverfolgung                                    | host/admin                 |
+| `/ratings`         | eigenes Rating (player) bzw. Rangliste und Admin-Reset     | angemeldet                 |
+| `/reports`         | Meldungs-Visualisierung und Verwaltung                      | admin                      |
 | `/profile`         | eigenes Profil inkl. Rating                                | angemeldet                 |
 | `/play`            | Brett direkt im Tab, ohne Sitzung                           | angemeldet                 |
 | `/connectfour/:id` | Spielfeld-Fenster, wird per `window.open` als Pop-up geöffnet | Mitwirkende, Host, Admin   |
@@ -269,14 +270,14 @@ Oberfläche ruft ausschließlich `api` auf.
 | POST    | `/api/connect-four/games`      | `recordConnectFourGame` | `game_sessions`, `moves`, `player_ratings` |
 | GET     | `/api/connect-four/games`      | `listGames`             | dito        |
 | DELETE  | `/api/demo-data`               | `clearDemoData`         | dito        |
-| GET     | `/api/ratings`                 | `getRatings`            | `users`, `player_ratings` |
-| GET     | `/api/ratings/{id}`            | `getRating`             | dito        |
+| GET     | `/api/ratings`                 | `getRatings`            | `users`, `player_ratings`; player nur eigene Zeile |
+| GET     | `/api/ratings/{id}`            | `getRating`             | dito; player nur eigene Id |
 | POST    | `/api/admin/ratings/{id}/reset` | `resetRating`          | `player_ratings`, `rating_resets` |
 | GET     | `/api/reports`                 | `getReports`            | `player_reports` (nur Admin) |
 | POST    | `/api/reports`                 | `createReport`          | `player_reports` (nur Admin) |
 | PATCH   | `/api/reports/{id}`            | `updateReport`          | dito        |
 | DELETE  | `/api/reports/{id}`            | `deleteReport`          | dito        |
-| GET     | `/api/reports/visualisation`   | `getReportOverview`     | `player_reports`, `users` |
+| GET     | `/api/reports/visualisation`   | `getReportOverview`     | `player_reports`, `users` (nur Admin) |
 
 Drei Punkte, an denen Frontend und Backend sich verstehen müssen:
 

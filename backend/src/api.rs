@@ -781,12 +781,14 @@ pub async fn list_game_types(
 
 /* ------------------------------------------------------------------- Ratings */
 
-/// Alle Ratings, absteigend. Lesen darf jede angemeldete Person.
+/// Alle Ratings, absteigend. Hosts und Admins sehen die Rangliste, Spieler:innen
+/// ausschliesslich ihr eigenes Rating.
 pub async fn list_ratings(
     State(pool): State<MySqlPool>,
-    _user: CurrentUser,
+    user: CurrentUser,
 ) -> Result<Json<Value>, ApiError> {
-    let ratings = sqlx::query_as::<_, PlayerRating>(
+    let own_only = user.role == "player";
+    let sql = if own_only {
         "SELECT u.id AS user_id, u.username, u.role,
                 COALESCE(r.rating, ?) AS rating,
                 COALESCE(r.games_played, 0) AS games_played,
@@ -797,23 +799,43 @@ pub async fn list_ratings(
                                  '%Y-%m-%dT%H:%i:%sZ') AS CHAR) AS updated_at
          FROM users u
          LEFT JOIN player_ratings r ON r.user_id = u.id
-         ORDER BY rating DESC, games_played DESC, u.username",
-    )
-    .bind(DEFAULT_RATING)
-    .fetch_all(&pool)
-    .await
-    .map_err(internal)?;
+         WHERE u.id = ?
+         ORDER BY rating DESC, games_played DESC, u.username"
+    } else {
+        "SELECT u.id AS user_id, u.username, u.role,
+                COALESCE(r.rating, ?) AS rating,
+                COALESCE(r.games_played, 0) AS games_played,
+                COALESCE(r.wins, 0) AS wins,
+                COALESCE(r.losses, 0) AS losses,
+                COALESCE(r.draws, 0) AS draws,
+                CAST(DATE_FORMAT(COALESCE(r.updated_at, u.created_at),
+                                 '%Y-%m-%dT%H:%i:%sZ') AS CHAR) AS updated_at
+         FROM users u
+         LEFT JOIN player_ratings r ON r.user_id = u.id
+         ORDER BY rating DESC, games_played DESC, u.username"
+    };
+    let mut query = sqlx::query_as::<_, PlayerRating>(sql).bind(DEFAULT_RATING);
+    if own_only {
+        query = query.bind(user.id);
+    }
+    let ratings = query.fetch_all(&pool).await.map_err(internal)?;
     Ok(Json(json!(ratings)))
 }
 
-/// Rating einer einzelnen Person. Unbekannte Konten sind 404, vorhandene
-/// Konten ohne Zeile starten mit dem Standardwert.
+/// Rating einer einzelnen Person. Spieler:innen duerfen nur ihr eigenes lesen.
+/// Unbekannte Konten sind 404, vorhandene Konten ohne Zeile starten mit dem
+/// Standardwert.
 pub async fn read_rating(
     State(pool): State<MySqlPool>,
-    _user: CurrentUser,
+    user: CurrentUser,
     id: Result<Path<String>, PathRejection>,
 ) -> Result<Json<Value>, ApiError> {
     let id = path_id(id)?;
+    if user.role == "player" && id != user.id {
+        return Err(ApiError::Forbidden(
+            "players may only read their own rating".into(),
+        ));
+    }
     let rating = fetch_rating(&pool, id).await?;
     Ok(Json(json!(rating)))
 }
@@ -1747,36 +1769,23 @@ pub struct ReportFilter {
     reporter_id: Option<u64>,
 }
 
-/// Visualisierung der Meldungen.
+/// Visualisierung der Meldungen - nur fuer Admins.
 ///
-/// Admins sehen alle Meldungen, alle anderen nur die Meldungen, an denen sie
-/// selbst beteiligt sind (als Melder oder gemeldete Person). Aggregiert wird
-/// nach Status, Grund und Monat; die Detailroute `/reports` bleibt weiterhin
-/// der Administration vorbehalten.
+/// Aggregiert nach Status, Grund und Monat. Die frueheren Spieleransichten
+/// sind entfallen: regulaere Konten sehen keine Meldungsdaten mehr.
 pub async fn report_visualisation(
     State(pool): State<MySqlPool>,
     user: CurrentUser,
 ) -> Result<Json<Value>, ApiError> {
-    let is_admin = user.is_admin();
-    let (by_status, total) = if is_admin {
-        status_counts(
-            &pool,
-            "SELECT status, COUNT(*) FROM player_reports GROUP BY status",
-            None,
-            None,
-        )
-        .await?
-    } else {
-        status_counts(
-            &pool,
-            "SELECT status, COUNT(*) FROM player_reports
-             WHERE reporter_id = ? OR reported_user_id = ?
-             GROUP BY status",
-            Some(user.id),
-            Some(user.id),
-        )
-        .await?
-    };
+    user.require_admin()?;
+
+    let (by_status, total) = status_counts(
+        &pool,
+        "SELECT status, COUNT(*) FROM player_reports GROUP BY status",
+        None,
+        None,
+    )
+    .await?;
 
     let (submitted, _) = status_counts(
         &pool,
@@ -1793,72 +1802,45 @@ pub async fn report_visualisation(
     )
     .await?;
 
-    let reasons = if is_admin {
-        grouped_counts(
-            &pool,
-            "SELECT reason, COUNT(*) FROM player_reports
-             GROUP BY reason ORDER BY COUNT(*) DESC, reason LIMIT 8",
-            None,
-            None,
-        )
-        .await?
-    } else {
-        grouped_counts(
-            &pool,
-            "SELECT reason, COUNT(*) FROM player_reports
-             WHERE reporter_id = ? OR reported_user_id = ?
-             GROUP BY reason ORDER BY COUNT(*) DESC, reason LIMIT 8",
-            Some(user.id),
-            Some(user.id),
-        )
-        .await?
-    };
+    let reasons = grouped_counts(
+        &pool,
+        "SELECT reason, COUNT(*) FROM player_reports
+         GROUP BY reason ORDER BY COUNT(*) DESC, reason LIMIT 8",
+        None,
+        None,
+    )
+    .await?;
 
-    let mut months = if is_admin {
-        grouped_counts(
-            &pool,
-            "SELECT DATE_FORMAT(created_at, '%Y-%m') AS month, COUNT(*)
-             FROM player_reports GROUP BY month ORDER BY month DESC LIMIT 12",
-            None,
-            None,
-        )
-        .await?
-    } else {
-        grouped_counts(
-            &pool,
-            "SELECT DATE_FORMAT(created_at, '%Y-%m') AS month, COUNT(*)
-             FROM player_reports WHERE reporter_id = ? OR reported_user_id = ?
-             GROUP BY month ORDER BY month DESC LIMIT 12",
-            Some(user.id),
-            Some(user.id),
-        )
-        .await?
-    };
+    let mut months = grouped_counts(
+        &pool,
+        "SELECT DATE_FORMAT(created_at, '%Y-%m') AS month, COUNT(*)
+         FROM player_reports GROUP BY month ORDER BY month DESC LIMIT 12",
+        None,
+        None,
+    )
+    .await?;
     months.reverse();
 
-    let top_reported = if is_admin {
-        let rows = sqlx::query_as::<_, (u64, String, i64)>(
-            "SELECT r.reported_user_id, u.username, COUNT(*) AS count
-             FROM player_reports r
-             JOIN users u ON u.id = r.reported_user_id
-             GROUP BY r.reported_user_id, u.username
-             ORDER BY count DESC, u.username
-             LIMIT 5",
-        )
-        .fetch_all(&pool)
-        .await
-        .map_err(internal)?;
-        rows.iter()
-            .map(|(id, username, count)| {
-                json!({ "user_id": id, "username": username, "count": count })
-            })
-            .collect::<Vec<Value>>()
-    } else {
-        Vec::new()
-    };
+    let rows = sqlx::query_as::<_, (u64, String, i64)>(
+        "SELECT r.reported_user_id, u.username, COUNT(*) AS count
+         FROM player_reports r
+         JOIN users u ON u.id = r.reported_user_id
+         GROUP BY r.reported_user_id, u.username
+         ORDER BY count DESC, u.username
+         LIMIT 5",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(internal)?;
+    let top_reported = rows
+        .iter()
+        .map(|(id, username, count)| {
+            json!({ "user_id": id, "username": username, "count": count })
+        })
+        .collect::<Vec<Value>>();
 
     Ok(Json(json!({
-        "scope": if is_admin { "all" } else { "mine" },
+        "scope": "all",
         "total": total,
         "by_status": by_status,
         "submitted": submitted,

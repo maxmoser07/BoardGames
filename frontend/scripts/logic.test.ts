@@ -30,6 +30,11 @@ import {
 } from "../src/lib/reportVisuals.ts";
 import { parseRoute, setupPath, windowPath } from "../src/router.ts";
 import {
+  canViewCamera,
+  canViewLeaderboard,
+  canViewReports,
+} from "../src/lib/permissions.ts";
+import {
   isPlayable,
   isRunning,
   opponent,
@@ -388,6 +393,29 @@ describe("Gewinnchancen", () => {
       oddsHeadline(estimateWinningOdds(buildGrid(redThreat), "red"), { red: "Grün" }),
       "Grün klar im Vorteil",
     );
+  });
+});
+
+describe("Rollenmatrix", () => {
+  it("beschraenkt Meldungen auf die Administration", () => {
+    assert.equal(canViewReports(undefined), false);
+    assert.equal(canViewReports("player"), false);
+    assert.equal(canViewReports("host"), false);
+    assert.equal(canViewReports("admin"), true);
+  });
+
+  it("gibt die volle Rangliste nur Hosts und Admins", () => {
+    assert.equal(canViewLeaderboard(undefined), false);
+    assert.equal(canViewLeaderboard("player"), false);
+    assert.equal(canViewLeaderboard("host"), true);
+    assert.equal(canViewLeaderboard("admin"), true);
+  });
+
+  it("beschraenkt Kamera und Brettverfolgung auf Hosts und Admins", () => {
+    assert.equal(canViewCamera(undefined), false);
+    assert.equal(canViewCamera("player"), false);
+    assert.equal(canViewCamera("host"), true);
+    assert.equal(canViewCamera("admin"), true);
   });
 });
 

@@ -108,16 +108,22 @@ Expect (Send GET "/ratings" -token "") "ratings ohne Token" 401
 Expect (Send GET "/reports/visualisation" -token "") "Meldungs-Visualisierung ohne Token" 401
 Expect (Send POST "/sessions" '{"game_type":"connect-four","host_id":1,"players":{"red":2,"yellow":3}}' -token "") "Sitzung ohne Token" 401
 Expect (Send GET "/users" -token $aliceToken) "users als Player" 200
-$playerRatings = Ok (Send GET "/ratings" -token $aliceToken) "Player liest Ratings"
-Write-Host "  Ratings: $(($playerRatings | Measure-Object).Count) Eintraege"
-$playerOverview = Ok (Send GET "/reports/visualisation" -token $aliceToken) "Player liest Meldungs-Visualisierung"
-Write-Host "  Visualisierung: scope=$($playerOverview.scope), gesamt=$($playerOverview.total)"
+$playerRatings = @(Ok (Send GET "/ratings" -token $aliceToken) "Player liest eigenes Rating")
+if ($playerRatings.Count -ne 1) { throw "Player sieht $($playerRatings.Count) Ratings statt nur dem eigenen" }
+if ($playerRatings[0].user_id -ne 2) { throw "Player sieht ein fremdes Rating" }
+Write-Host "  Player-Rating: $($playerRatings[0].username) ($($playerRatings[0].rating))"
+Ok (Send GET "/ratings/2" -token $aliceToken) "Player liest eigenes Rating" | Out-Null
+Expect (Send GET "/ratings/3" -token $aliceToken) "Player liest fremdes Rating" 403
+Expect (Send GET "/reports/visualisation" -token $aliceToken) "Player liest Meldungs-Visualisierung" 403
 Expect (Send GET "/reports" -token $aliceToken) "Player liest Meldungen" 403
 Expect (Send POST "/admin/ratings/2/reset" '{"rating":1200}' -token $aliceToken) "Player setzt Rating zurueck" 403
 Expect (Send GET "/admin/users" -token $aliceToken) "Player liest Benutzerverwaltung" 403
 Expect (Send DELETE "/demo-data" -token $aliceToken) "Player loescht Demo" 403
 Expect (Send POST "/sessions" '{"game_type":"connect-four","host_id":2,"players":{"red":2,"yellow":3}}' -token $aliceToken) "Player legt Sitzung an" 403
 Expect (Send GET "/reports" -token $hostToken) "Host liest Meldungen" 403
+Expect (Send GET "/reports/visualisation" -token $hostToken) "Host liest Meldungs-Visualisierung" 403
+$hostRatings = @(Ok (Send GET "/ratings" -token $hostToken) "Host liest Rangliste")
+if ($hostRatings.Count -le 1) { throw "Host sieht keine vollstaendige Rangliste" }
 Expect (Send GET "/admin/users" -token $hostToken) "Host liest Benutzerverwaltung" 403
 Expect (Send DELETE "/demo-data" -token $hostToken) "Host loescht Demo" 403
 

@@ -5,9 +5,9 @@ Spielverlaeufe sammeln und Spieler-Ratings pflegen. Connect Four ist die erste
 umgesetzte Partie, das Datenmodell ist bereits Spielunabhaengig. Waehrend der
 Partie zeigt das Brett laufend geschaetzte Gewinnchancen und einen Zugtipp; die
 Bewertung laeuft im Browser und ist im Frontend-README unter
-„Live-Gewinnchancen“ beschrieben. Die Rangliste unter `/ratings` zeigt die
-Elo-Werte, die Meldungsseite unter `/reports` ihre rollenabhaengige
-Visualisierung.
+„Live-Gewinnchancen“ beschrieben. Die Rangliste unter `/ratings` zeigt Hosts und
+Admins alle Elo-Werte, Spieler:innen ihr eigenes Rating; die Meldungsseite unter
+`/reports` bleibt der Administration vorbehalten.
 
 ```
 BoardGames/
@@ -254,8 +254,9 @@ ohnehin verboten waere.
 | Pause/Fortsetzen/Beenden                 | nein   | eigene Sitzung   | alle Sitzungen   |
 | Aufgeben                                 | eigener Platz | eigener Platz | eigener/erzwungen |
 | Sitzungsuebersicht `/sessions`           | nein   | ja               | ja               |
-| Rangliste `/ratings`                     | ja     | ja               | ja               |
-| Meldungs-Visualisierung `/reports`       | eigene Beteiligungen | eigene Beteiligungen | alle      |
+| Kamera-/Brettverfolgung `/camera`        | nein   | ja               | ja               |
+| Rangliste `/ratings`                     | eigenes Rating | Rangliste | Rangliste |
+| Meldungs-Visualisierung `/reports`       | nein   | nein             | ja               |
 | Meldungen verwalten (Details)            | nein   | nein             | ja               |
 | Rating zuruecksetzen                     | nein   | nein             | ja               |
 | Benutzerverwaltung `/api/admin/users`    | nein   | nein             | ja               |
@@ -304,11 +305,11 @@ Datenzugriff der Oberflaeche:
 | GET     | `/api/connect-four/games`               | alle Verlaeufe                         |
 | GET     | `/api/connect-four/games/{session_id}`  | eine Partie                            |
 | DELETE  | `/api/demo-data`                        | Beispielpartie loeschen (nur Admin)    |
-| GET     | `/api/ratings`                          | Rangliste aller Spieler:innen           |
-| GET     | `/api/ratings/{id}`                     | Rating einer Person                    |
+| GET     | `/api/ratings`                          | eigenes Rating (player) bzw. Rangliste (host/admin) |
+| GET     | `/api/ratings/{id}`                     | Rating einer Person; player nur das eigene |
 | POST    | `/api/admin/ratings/{id}/reset`         | Rating zuruecksetzen (nur Admin)       |
 | GET     | `/api/reports`                          | Spieler-Meldungen (nur Admin; Filter: status, reported_user_id, reporter_id) |
-| GET     | `/api/reports/visualisation`            | Aggregierte Meldungs-Visualisierung; Admins sehen alles, alle anderen nur eigene Beteiligungen |
+| GET     | `/api/reports/visualisation`            | Aggregierte Meldungs-Visualisierung (nur Admin) |
 | POST    | `/api/reports`                          | Meldung anlegen (nur Admin)            |
 | GET     | `/api/reports/{id}`                     | eine Meldung (nur Admin)               |
 | PATCH   | `/api/reports/{id}`                     | Meldung pruefen / Status aendern (nur Admin) |
@@ -322,15 +323,19 @@ Niederlage oder Remis, ebenso eine Aufgabe. Anonyme Ad-hoc-Partien aus `/play`
 und abgebrochene Sitzungen lassen die Ratings unveraendert. Neue Konten starten
 bei `1000`; die Grenzen sind `100` bis `4000`.
 
+`GET /api/ratings` liefert fuer `player` nur die eigene Zeile; `host` und
+`admin` erhalten die vollstaendige Rangliste. `GET /api/ratings/{id}` ist fuer
+`player` auf die eigene Kennung beschraenkt (sonst `403`).
+
 `POST /api/admin/ratings/{id}/reset` setzt standardmaessig auf `1000` und
 loescht Siege, Niederlagen und Remis. Mit `{"rating": 1234, "reset_stats":
 false}` bleibt die Statistik erhalten. Der alte Wert, die Administration und
 ein optionaler Grund landen in `rating_resets`.
 
-`GET /api/reports/visualisation` liefert Zaehlungen nach Status, Grund und Monat
-sowie die von der Person eingereichten und gegen sie eingegangenen Meldungen.
-Fuer Admins kommt die Liste der am haeufigsten gemeldeten Personen hinzu. Die
-Detailroute `/api/reports` bleibt der Administration vorbehalten.
+`GET /api/reports/visualisation` ist der Administration vorbehalten und liefert
+Zaehlungen nach Status, Grund und Monat sowie die vom angemeldeten Admin
+eingereichten und gegen ihn eingegangenen Meldungen. Die Detailroute
+`/api/reports` bleibt ebenfalls admin-only.
 
 Die Zustaende ohne eigene Spalte liegen in `game_sessions.metadata_json`:
 `paused_at`, `paused_ms`, `abort_reason`, `surrendered_by`, `winner_side` sowie

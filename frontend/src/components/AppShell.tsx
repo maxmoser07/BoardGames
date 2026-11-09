@@ -4,7 +4,7 @@ import { Camera, CircleUser, Flag, History, LayoutGrid, Play, ShieldCheck, Troph
 import { api } from "../lib/api";
 import { signOut, useAuth } from "../lib/auth";
 import { ROLE_LABEL } from "../lib/format";
-import { canViewReports, canViewSessions } from "../lib/permissions";
+import { canViewCamera, canViewReports, canViewSessions } from "../lib/permissions";
 import { useNavigate } from "../router";
 import type { UserRole } from "../types";
 import { Logo } from "./Logo";
@@ -27,7 +27,13 @@ interface AppShellProps {
 const NAV = [
   { path: "/", label: "Spiele", icon: LayoutGrid, match: "catalog", visible: () => true },
   { path: "/play", label: "Direkt spielen", icon: Play, match: "play", visible: () => true },
-  { path: "/camera", label: "Kamera", icon: Camera, match: "camera", visible: () => true },
+  {
+    path: "/camera",
+    label: "Kamera",
+    icon: Camera,
+    match: "camera",
+    visible: (role: UserRole) => canViewCamera(role),
+  },
   {
     path: "/sessions",
     label: "Sitzungen",
@@ -72,6 +78,8 @@ export function AppShell({ active, children }: AppShellProps) {
           {NAV.filter(({ visible }) => (user ? visible(user.role) : false)).map(
             ({ path, label, icon: Icon, match }) => {
               const isActive = active === match;
+              // Spieler:innen sehen auf /ratings nur ihr eigenes Rating.
+              const text = match === "ratings" && user?.role === "player" ? "Mein Rating" : label;
               return (
                 <button
                   key={path}
@@ -81,7 +89,7 @@ export function AppShell({ active, children }: AppShellProps) {
                   onClick={() => navigate(path)}
                 >
                   <Icon aria-hidden="true" size={16} />
-                  {label}
+                  {text}
                 </button>
               );
             },

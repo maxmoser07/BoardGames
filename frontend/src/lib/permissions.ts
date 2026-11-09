@@ -23,11 +23,21 @@ export function canViewSessions(role: UserRole | undefined): boolean {
 }
 
 /**
- * Die Visualisierung der Meldungen ist fuer alle angemeldeten Rollen gedacht.
- * Spieler sehen dort nur die Meldungen, an denen sie selbst beteiligt sind.
+ * Regulaere Spieler:innen sehen die Meldungsverwaltung nicht. Die Details und
+ * die aggregierte Visualisierung bleiben der Administration vorbehalten.
  */
 export function canViewReports(role: UserRole | undefined): boolean {
-  return role !== undefined;
+  return role === "admin";
+}
+
+/** Die Rangliste mit allen Konten ist Hosts und Admins vorbehalten. */
+export function canViewLeaderboard(role: UserRole | undefined): boolean {
+  return role === "admin" || role === "host";
+}
+
+/** Die Kamera-/Brettverfolgung ist ein Werkzeug fuer Hosts und Admins. */
+export function canViewCamera(role: UserRole | undefined): boolean {
+  return role === "admin" || role === "host";
 }
 
 /** Pruefen, kommentieren und loeschen duerfen nur Admins. */

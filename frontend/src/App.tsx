@@ -10,17 +10,17 @@ import RatingsView from "./RatingsView";
 import ReportsView from "./ReportsView";
 import SessionsView from "./SessionsView";
 import { useAuth } from "./lib/auth";
-import { canViewReports, canViewSessions } from "./lib/permissions";
+import { canViewCamera, canViewReports, canViewSessions } from "./lib/permissions";
 import { useNavigate, useRoute } from "./router";
 
 /**
  * Wurzel der App: verteilt die Ansichten. Bewusst ohne Router-Bibliothek,
  * die Pfade sind in `router.ts` festgelegt.
  *
- * Vor jeder Ansicht steht die Rollenpruefung: `player` kommt nur an Katalog,
- * Spielansicht, eigenes Profil, `/play`, die Rangliste und die eigene
- * Meldungsuebersicht; `host` zusaetzlich an die Sitzungsverwaltung; `admin`
- * zusaetzlich an die Meldungsverwaltung. Die API prueft dieselben Regeln noch
+ * Vor jeder Ansicht steht die Rollenpruefung: `player` kommt an Katalog,
+ * Spielansicht, eigenes Profil, `/play` und das eigene Rating; `host`
+ * zusaetzlich an Sitzungsverwaltung, Kamera und Rangliste; `admin` zusaetzlich
+ * an Meldungen und Benutzerverwaltung. Die API prueft dieselben Regeln noch
  * einmal.
  */
 export const App: React.FC = () => {
@@ -50,14 +50,18 @@ export const App: React.FC = () => {
       return canViewReports(user.role) ? (
         <ReportsView />
       ) : (
-        <NoAccess message="Meldungen sind nur für angemeldete Personen sichtbar." />
+        <NoAccess message="Meldungen sind der Administration vorbehalten." />
       );
     case "ratings":
       return <RatingsView />;
     case "play":
       return <PlayView />;
     case "camera":
-      return <CameraView />;
+      return canViewCamera(user.role) ? (
+        <CameraView />
+      ) : (
+        <NoAccess message="Die Kamera-/Brettverfolgung ist Hosts und Admins vorbehalten." />
+      );
     case "game":
       // `key` sorgt dafür, dass beim Wechsel auf eine andere Sitzung das Brett
       // neu aufgebaut wird (Zustand liegt in useConnectFour).

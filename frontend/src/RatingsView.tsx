@@ -7,7 +7,7 @@ import { useLiveData } from "./hooks/useLiveData";
 import { api } from "./lib/api";
 import { useAuth } from "./lib/auth";
 import { formatDateTime } from "./lib/format";
-import { isAdmin } from "./lib/permissions";
+import { canViewLeaderboard, isAdmin } from "./lib/permissions";
 import {
   DEFAULT_RATING,
   RATING_TIER_LABEL,
@@ -25,10 +25,18 @@ const MAX_RATING = 4000;
  * Rangliste aller Spieler:innen. Admins koennen ein Rating hier zuruecksetzen,
  * wenn eine Partie falsch gewertet wurde oder ein Ergebnis rueckgaengig gemacht
  * werden soll. Der alte Wert wird im Backend protokolliert.
+ *
+ * Regulaere Spieler:innen sehen ausschliesslich ihr eigenes Rating; die
+ * vollstaendige Rangliste ist Hosts und Admins vorbehalten.
  */
 const RatingsView: React.FC = () => {
   const { user } = useAuth();
-  const ratings = useLiveData(() => api.getRatings());
+  const leaderboard = canViewLeaderboard(user?.role);
+  const ratings = useLiveData<PlayerRating[]>(() => {
+    if (leaderboard) return api.getRatings();
+    if (!user) return Promise.resolve([]);
+    return api.getRating(user.id).then((rating) => [rating]);
+  });
   const canReset = isAdmin(user?.role);
 
   const [editing, setEditing] = useState<number | null>(null);
@@ -78,11 +86,10 @@ const RatingsView: React.FC = () => {
   }
 
   const loadError = ratings.error;
-
-  return (
-    <AppShell active="ratings">
+  const notices = (
+    <>
       {loadError ? (
-        <Notice tone="danger" title="Rangliste konnte nicht geladen werden">
+        <Notice tone="danger" title="Rating konnte nicht geladen werden">
           {loadError}
         </Notice>
       ) : null}
@@ -98,6 +105,110 @@ const RatingsView: React.FC = () => {
           {error}
         </Notice>
       ) : null}
+    </>
+  );
+
+  if (!leaderboard) {
+    const tier = own ? ratingTier(own.rating) : null;
+    return (
+      <AppShell active="ratings">
+        {notices}
+
+        <section className="hero">
+          <div className="hero__text">
+            <p className="hero__eyebrow">
+              <Trophy aria-hidden="true" size={15} />
+              Mein Rating
+            </p>
+            <h1 className="hero__title">Dein Rating</h1>
+            <p className="hero__lead">
+              Dein Elo-Wert aus beendeten Partien. Die vollständige Rangliste sehen Hosts und
+              die Administration.
+            </p>
+          </div>
+
+          <dl className="hero__stats">
+            <div className="stat">
+              <dt className="stat__value">{own ? formatRating(own.rating) : "–"}</dt>
+              <dd className="stat__label">Rating</dd>
+            </div>
+            <div className="stat">
+              <dt className="stat__value">{tier ? RATING_TIER_LABEL[tier] : "–"}</dt>
+              <dd className="stat__label">Stufe</dd>
+            </div>
+            <div className="stat">
+              <dt className="stat__value">{own && own.gamesPlayed > 0 ? `${winRate(own)} %` : "–"}</dt>
+              <dd className="stat__label">Siegquote</dd>
+            </div>
+            <div className="stat">
+              <dt className="stat__value">{own ? own.gamesPlayed : "–"}</dt>
+              <dd className="stat__label">gewertete Partien</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section className="card panel" aria-labelledby="panel-own-rating">
+          <header className="panel__head">
+            <span className="panel__icon" aria-hidden="true">
+              <Trophy size={18} />
+            </span>
+            <div>
+              <h2 className="panel__title" id="panel-own-rating">
+                Mein Rating
+              </h2>
+              <p className="panel__subtitle">Nur dein eigener Wert</p>
+            </div>
+          </header>
+
+          {ratings.loading ? (
+            <Skeleton rows={4} />
+          ) : own ? (
+            <dl className="meta-list" style={{ margin: 0 }}>
+              <div className="meta-list__row">
+                <dt>Rating</dt>
+                <dd>{formatRating(own.rating)}</dd>
+              </div>
+              <div className="meta-list__row">
+                <dt>Stufe</dt>
+                <dd>
+                  <span className={`rating-tier rating-tier--${tier}`}>
+                    {tier ? RATING_TIER_LABEL[tier] : "–"}
+                  </span>
+                </dd>
+              </div>
+              <div className="meta-list__row">
+                <dt>Partien</dt>
+                <dd>{own.gamesPlayed}</dd>
+              </div>
+              <div className="meta-list__row">
+                <dt>Siege / Niederlagen / Remis</dt>
+                <dd>
+                  {own.wins} / {own.losses} / {own.draws}
+                </dd>
+              </div>
+              <div className="meta-list__row">
+                <dt>Siegquote</dt>
+                <dd>{own.gamesPlayed > 0 ? `${winRate(own)} %` : "–"}</dd>
+              </div>
+              <div className="meta-list__row">
+                <dt>Zuletzt gewertet</dt>
+                <dd>{formatDateTime(own.updatedAt)}</dd>
+              </div>
+            </dl>
+          ) : (
+            <EmptyState icon={Trophy} title="Noch kein Rating">
+              Sobald eine Partie mit zwei registrierten Konten gewertet ist, erscheint dein
+              Wert hier.
+            </EmptyState>
+          )}
+        </section>
+      </AppShell>
+    );
+  }
+
+  return (
+    <AppShell active="ratings">
+      {notices}
 
       <section className="hero">
         <div className="hero__text">
