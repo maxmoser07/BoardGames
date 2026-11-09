@@ -1,6 +1,7 @@
 import { Ban, ChevronRight, Flag, Pause, Play, Trophy } from "lucide-react";
 
 import { formatDuration, formatRelative } from "../lib/format";
+import { describeMove } from "../lib/gameMoves";
 import { useNow } from "../hooks/useNow";
 import {
   SIDE_LABEL,
@@ -79,6 +80,7 @@ export function SessionCard({
           <p className="session__id">
             <code>{session.id}</code>
             {session.demo ? <span className="chip chip--demo">Beispiel</span> : null}
+            {session.friendly ? <span className="chip chip--friendly">Freundschaftsspiel</span> : null}
           </p>
           <p className="session__meta">
             {host ? `Host: ${host.username}` : "Host: unbekannt"} · {formatRelative(session.createdAt)}
@@ -118,16 +120,14 @@ export function SessionCard({
             <ChevronRight aria-hidden="true" className="session__chevron" size={15} />
           </summary>
           <div className="session__details-body">
-            <GamePreview moves={game.moves} size="md" />
+            <GamePreview gameType={game.gameType} moves={game.moves} size="md" />
             <ol className="moves">
               {game.moves.map((move) => (
                 <li key={move.turn} className={`moves__item moves__item--${move.player}`}>
                   <span className="moves__turn">{move.turn}.</span>
                   <span className={`side__dot side__dot--${move.player}`} aria-hidden="true" />
                   <span className="moves__side">{SIDE_LABEL[move.player]}</span>
-                  <span className="moves__cell">
-                    Spalte {move.location.x + 1}, Reihe {move.location.y + 1}
-                  </span>
+                  <span className="moves__cell">{describeMove(game.gameType, move)}</span>
                 </li>
               ))}
             </ol>

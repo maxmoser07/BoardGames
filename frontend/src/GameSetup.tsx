@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowLeft, ArrowRight, BookOpen, Ban, History, LayoutGrid, Lock, Pause, Play, Sparkles } from "lucide-react";
+import { ArrowLeft, ArrowRight, BookOpen, Ban, Handshake, History, LayoutGrid, Lock, Pause, Play, Sparkles, Trophy } from "lucide-react";
 
 import { GameArt } from "./components/GameArt";
 import { GameCard } from "./components/GameCard";
@@ -34,6 +34,7 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
 
   const [redId, setRedId] = useState<number | null>(null);
   const [yellowId, setYellowId] = useState<number | null>(null);
+  const [friendly, setFriendly] = useState(false);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<{ tone: "danger" | "warn"; text: string } | null>(null);
   const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
@@ -75,6 +76,7 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
         gameType: gameTypes.name,
         hostId: user.id,
         players: { red: redId, yellow: yellowId },
+        friendly,
       });
       const path = windowPath(gameTypes.name, session.id);
       if (!path) throw new ApiError("Für dieses Spiel gibt es noch kein Spielfeld-Fenster.");
@@ -239,7 +241,8 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
               <>
                 <Notice tone="info" title="Direkt spielen">
                   Dein Konto ist als Spieler:in angelegt. Sitzungen mit Host und festen Plätzen legen nur Hosts
-                  und Admins an – du kannst direkt eine Partie starten.
+                  und Admins an – du kannst direkt eine Partie starten. Diese Partien sind
+                  Freundschaftsspiele und ändern keine Wertung.
                 </Notice>
 
                 {myOpenSession ? (
@@ -265,7 +268,11 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
                 ) : null}
 
                 <div className="panel__actions">
-                  <button type="button" className="btn btn--primary" onClick={() => navigate("/play")}>
+                  <button
+                    type="button"
+                    className="btn btn--primary"
+                    onClick={() => navigate(`/play/${gameTypes.name}`)}
+                  >
                     <Play aria-hidden="true" size={16} />
                     Jetzt spielen
                   </button>
@@ -279,6 +286,40 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
               <Skeleton rows={4} />
             ) : (
               <>
+                <fieldset className="mode">
+                  <legend className="label">Partieart</legend>
+                  <div className="mode__options">
+                    <label className={`mode__option${friendly ? "" : " mode__option--active"}`}>
+                      <input
+                        type="radio"
+                        name="match-mode"
+                        value="rated"
+                        checked={!friendly}
+                        onChange={() => setFriendly(false)}
+                      />
+                      <Trophy aria-hidden="true" size={18} />
+                      <span className="mode__text">
+                        <span className="mode__title">Gewertet</span>
+                        <span className="mode__hint">Das Ergebnis zählt zur Wertung.</span>
+                      </span>
+                    </label>
+                    <label className={`mode__option${friendly ? " mode__option--active" : ""}`}>
+                      <input
+                        type="radio"
+                        name="match-mode"
+                        value="friendly"
+                        checked={friendly}
+                        onChange={() => setFriendly(true)}
+                      />
+                      <Handshake aria-hidden="true" size={18} />
+                      <span className="mode__text">
+                        <span className="mode__title">Freundschaftsspiel</span>
+                        <span className="mode__hint">Ohne Einfluss auf die Wertung.</span>
+                      </span>
+                    </label>
+                  </div>
+                </fieldset>
+
                 <div className="pickers">
                   <PlayerPicker
                     side="red"
@@ -347,14 +388,20 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
                     {busy ? <Spinner label="wird angelegt" /> : <Play aria-hidden="true" size={16} />}
                     Partie starten
                   </button>
-                  <button type="button" className="btn btn--ghost" onClick={() => navigate("/play")}>
+                  <button
+                    type="button"
+                    className="btn btn--ghost"
+                    onClick={() => navigate(`/play/${gameTypes.name}`)}
+                  >
                     Ohne Sitzung spielen
                   </button>
                 </div>
                 <p className="hint">
-                  {ready
-                    ? "Das Brett öffnet sich als eigenes Fenster – beide Personen spielen abwechselnd darin."
-                    : `Wähle zwei verschiedene Personen. ${SIDE_LABEL.red} beginnt.`}
+                  {friendly
+                    ? "Freundschaftsspiel: Der Verlauf wird gespeichert, die Wertung bleibt unverändert."
+                    : ready
+                      ? "Das Brett öffnet sich als eigenes Fenster – beide Personen spielen abwechselnd darin."
+                      : `Wähle zwei verschiedene Personen. ${SIDE_LABEL.red} beginnt.`}
                 </p>
               </>
             )}

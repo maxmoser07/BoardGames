@@ -183,6 +183,42 @@ $fremd = Ok (Send POST "/sessions" '{"game_type":"connect-four","host_id":1,"pla
 Expect (Send POST "/sessions/$($fremd.id)/surrender" '{"user_id":4}' -token $adminToken) "Person sitzt nicht am Brett" 400
 Ok (Send POST "/sessions/$($fremd.id)/abort") "Fremde Sitzung aufraeumen" | Out-Null
 
+Write-Host "`n== Freundschaftsspiel und Wertung =="
+function RatingOf($ratings, [int]$userId) {
+  $row = $ratings | Where-Object { $_.user_id -eq $userId -and $_.game_type -eq "connect-four" }
+  if ($null -eq $row) { throw "Keine Wertungszeile fuer Benutzer $userId" }
+  return [int]$row.rating
+}
+
+# Freundschaftsspiel: Verlauf und Ergebnis werden gespeichert, die Wertung
+# bleibt aber unveraendert.
+$before = Ok (Send GET "/ratings") "/ratings"
+$aliceBefore = RatingOf $before 2
+$bobBefore = RatingOf $before 3
+$friendly = Ok (Send POST "/sessions" '{"game_type":"connect-four","host_id":1,"players":{"red":2,"yellow":3},"friendly":true}') "Sitzung als Freundschaftsspiel"
+if (-not $friendly.friendly) { throw "Sitzung $($friendly.id) ist nicht als Freundschaftsspiel markiert" }
+Ok (Send POST "/connect-four/games" (Winmoves "`"duration_ms`":9000,`"session_id`":$($friendly.id)")) "Freundschaftsspiel speichern" | Out-Null
+$friendlyClosed = Ok (Send GET "/sessions/$($friendly.id)") "Freundschaftsspiel danach"
+if (-not $friendlyClosed.friendly) { throw "friendly-Kennzeichen ging beim Speichern verloren" }
+if ($friendlyClosed.outcome -ne "win") { throw "Freundschaftsspiel wurde nicht gespeichert" }
+$afterFriendly = Ok (Send GET "/ratings") "/ratings nach Freundschaftsspiel"
+if ((RatingOf $afterFriendly 2) -ne $aliceBefore -or (RatingOf $afterFriendly 3) -ne $bobBefore) {
+  throw "Freundschaftsspiel hat die Wertung veraendert"
+}
+Write-Host "  Freundschaftsspiel $($friendly.id) gespeichert, Wertung bleibt $aliceBefore/$bobBefore"
+
+# Dieselbe Partie als gewertete Sitzung: Rot gewinnt, beide Staende aendern sich.
+$rated = Ok (Send POST "/sessions" '{"game_type":"connect-four","host_id":1,"players":{"red":2,"yellow":3}}') "gewertete Sitzung"
+if ($rated.friendly) { throw "Gewertete Sitzung ist faelschlich freundschaftlich" }
+Ok (Send POST "/connect-four/games" (Winmoves "`"duration_ms`":9000,`"session_id`":$($rated.id)")) "gewertete Partie speichern" | Out-Null
+$afterRated = Ok (Send GET "/ratings") "/ratings nach gewerteter Partie"
+$aliceAfter = RatingOf $afterRated 2
+$bobAfter = RatingOf $afterRated 3
+if ($aliceAfter -le $aliceBefore -or $bobAfter -ge $bobBefore) {
+  throw "Gewertete Partie hat die Elo-Staende nicht erwartet veraendert ($aliceBefore->$aliceAfter, $bobBefore->$bobAfter)"
+}
+Write-Host "  gewertete Partie: Alice $aliceBefore -> $aliceAfter, Bob $bobBefore -> $bobAfter"
+
 Write-Host "`n== Administration =="
 $script:token = $adminToken
 $adminUsers = Ok (Send GET "/admin/users") "/admin/users"
@@ -206,7 +242,7 @@ if ($MitDemoLoeschen) {
   Ok (Send DELETE "/demo-data") "/demo-data" | Out-Null
   Write-Host "  Beispielpartie geloescht (nur mit -MitDemoLoeschen)"
 }
-$sql = 'DELETE FROM game_sessions WHERE JSON_EXTRACT(metadata_json, ''$.demo'') IS NOT TRUE;'
+$sql = 'DELETE FROM game_sessions WHERE JSON_EXTRACT(metadata_json, ''$.demo'') IS NOT TRUE; DELETE FROM player_ratings;'
 # mysql schreibt die Passwort-Warnung nach stderr, das wuerde mit
 # $ErrorActionPreference = "Stop" den Lauf abbrechen.
 $ErrorActionPreference = "Continue"

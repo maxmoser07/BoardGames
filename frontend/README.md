@@ -1,8 +1,10 @@
 # BoardGames – Website
 
-React-/Vite-Oberfläche für Connect-Four-Sitzungen: anmelden, spielen, als Host
-Sitzungen anlegen, als Admin Meldungen und Benutzer verwalten. Die Rechte
-kommen aus derselben Datenbank wie im Backend (`v_user_permissions`).
+React-/Vite-Oberfläche für Brettspiel-Sitzungen: anmelden, spielen, als Host
+Sitzungen anlegen, als Admin Meldungen und Benutzer verwalten. Spielbar sind
+Vier Gewinnt, Tic Tac Toe, Memory, Schach und Mensch ärgere dich nicht.
+Die Rechte kommen aus derselben Datenbank wie im Backend
+(`v_user_permissions`).
 
 ```bash
 npm install
@@ -10,7 +12,7 @@ npm run dev        # http://localhost:5173
 npm run build      # tsc -b && vite build -> dist/
 npm run preview    # Produktionsbuild lokal ausliefern
 npm run lint       # eslint (inkl. React-Compiler-Regeln)
-npm test           # Router, Ableitungen und Ergebnis-Pruefung (Node, ohne Browser)
+npm test           # Router, Spiellogik und Ableitungen (Node, ohne Browser)
 ```
 
 Voraussetzung ist ein laufendes Backend: Sitzungen, Verläufe und Personen liegen
@@ -46,7 +48,7 @@ src/
   SessionsView.tsx         Sitzungen und Verläufe unter /sessions (host/admin)
   ReportsView.tsx          Meldungen unter /reports (admin)
   ProfileView.tsx          eigenes Profil unter /profile
-  GameSessionWindow.tsx    Spielfeld-Fenster unter /connectfour/:id
+  GameSessionWindow.tsx    Spielfeld-Fenster unter /:spiel/:id
   PlayView.tsx             Partie ohne Sitzung unter /play
   router.ts                Pfadauflösung ohne Router-Bibliothek
   types.ts                 Domänen-Typen (Sitzung, Ergebnis, Seite)
@@ -55,6 +57,10 @@ src/
   useConnectFour.ts        eingefroren – siehe unten
   ConnectFour.css          Gestaltung des Bretts inkl. Chancen-Balken
   index.css                Gestaltung der Oberfläche (Variablen + Komponenten)
+  games/                   Tic Tac Toe, Memory, Schach, Mensch
+    GameBoard.tsx          wählt das Brett zum Spielnamen
+    useGameRecord.ts       speichert ein Ergebnis genau einmal
+    logic/                 reine Spiellogik, auch von npm test genutzt
   components/              Bausteine: Karten, Kacheln, Auswahl, Anzeigen, Rahmen
     WinOdds.tsx            Balken, Legende und Zugtipp zu den Gewinnchancen
   hooks/                   useLiveData, useNow, usePausedTime, usePersistentState,
@@ -65,14 +71,16 @@ src/
     permissions.ts         Rollenmatrix für Navigation und Bedienelemente
     gameResultEndpoint.ts  ergänzt Sitzungs-Id und Spielzeit beim POST des Hooks
     connectFourOdds.ts     Monte-Carlo-Bewertung einer Stellung
+    gameMoves.ts           beschreibt Züge für die Verlaufsliste
     camera/                Kamera-Bibliothek: Kalibrierung, Erkennung, Zugtracker
-scripts/logic.test.ts      Tests für die reine Logik (npm test)
+scripts/logic.test.ts      Tests für Katalog, Router und Ableitungen (npm test)
+scripts/games.test.ts      Tests für die Spiellogik der neuen Bretter
 scripts/camera.test.ts     Tests für Geometrie, Farben, Detektor und Tracker
 ```
 
-Der Katalog in `lib/gameTypes.ts` listet Connect Four als spielbar und fünf
-weitere Spiele als „in Arbeit“ – die zeigen auf `/games/:name` Regeln und den
-Stand der Umsetzung, aber keine Partie.
+Der Katalog in `lib/gameTypes.ts` listet alle fünf Spiele als spielbar. Die
+neuen Spiele sind bewusst Zweipersonen-Fassungen und nutzen dasselbe
+Rot/Gelb-Sitzplatzmodell wie Vier Gewinnt.
 
 ### Farben und Seiten
 
@@ -155,12 +163,15 @@ schickt `Authorization: Bearer …` mit und meldet bei `401` lokal ab.
 | `/sessions`        | Sitzungen und Spielverläufe über alle Spiele               | host/admin                 |
 | `/reports`         | Meldungen                                                  | admin                      |
 | `/profile`         | eigenes Profil                                             | angemeldet                 |
-| `/play`            | Brett direkt im Tab, ohne Sitzung                           | angemeldet                 |
+| `/play`            | Spielauswahl für eine Partie ohne Sitzung                   | angemeldet                 |
+| `/play/:name`      | Brett direkt im Tab, ohne Sitzung                           | angemeldet                 |
 | `/connectfour/:id` | Spielfeld-Fenster, wird per `window.open` als Pop-up geöffnet | Mitwirkende, Host, Admin   |
+| `/:spiel/:id`      | dasselbe für `tictactoe`, `memory`, `schach` und `mensch-aergere-dich-nicht` | Mitwirkende, Host, Admin |
 
 Für den Produktivbetrieb braucht der Server einen SPA-Fallback: unbekannte
 Pfade müssen `index.html` ausliefern. `npm run preview` macht das bereits;
-`/connectfour/:id` funktioniert im Dev-Server ohne zusätzliche Konfiguration.
+`/connectfour/:id` und die übrigen Spielfeld-Routen funktionieren im Dev-Server
+ohne zusätzliche Konfiguration.
 
 ## Sitzungen steuern
 
@@ -225,6 +236,7 @@ Oberfläche ruft ausschließlich `api` auf.
 | POST    | `/api/logout`                  | `logout`                | `auth_tokens` |
 | GET     | `/api/users`                   | `getUsers`              | `users`     |
 | GET     | `/api/games`                   | `getGameTypes`          | `game_types` |
+| GET     | `/api/ratings`                 | `listRatings`           | `player_ratings`, `users`, `game_types` |
 | GET     | `/api/sessions`                | `listSessions`          | `game_sessions`, `game_session_players` |
 | POST    | `/api/sessions`                | `createSession`         | dito        |
 | GET     | `/api/sessions/{id}`           | `getSession`            | dito        |
@@ -233,7 +245,9 @@ Oberfläche ruft ausschließlich `api` auf.
 | POST    | `/api/sessions/{id}/abort`     | `abortSession`          | dito        |
 | POST    | `/api/sessions/{id}/surrender` | `surrenderSession`      | dito        |
 | POST    | `/api/connect-four/games`      | `recordConnectFourGame` | `game_sessions`, `moves` |
-| GET     | `/api/connect-four/games`      | `listGames`             | dito        |
+| GET     | `/api/connect-four/games`      | –                       | dito        |
+| POST    | `/api/games/{name}/results`    | `recordGame`            | `game_sessions`, `moves` |
+| GET     | `/api/games/results`           | `listGames`             | dito        |
 | DELETE  | `/api/demo-data`               | `clearDemoData`         | dito        |
 
 Drei Punkte, an denen Frontend und Backend sich verstehen müssen:
@@ -249,6 +263,17 @@ Drei Punkte, an denen Frontend und Backend sich verstehen müssen:
 3. **Der Dev-Server leitet `/api` weiter.** `vite.config.ts` proxyt auf
    `http://127.0.0.1:3000` (siehe `backend/.env`), überschreibbar mit
    `BACKEND_URL`. Hinter nginx (Docker) macht nginx das statt Vite.
+4. **Die neuen Bretter nutzen eine spielunabhängige Route.** `recordGame`
+   schickt `{ moves, winner, duration_ms, session_id }` an
+   `POST /api/games/{name}/results`. Die Details eines Zuges stehen in
+   `moves[].payload`; der Server prüft sie je nach Spiel und schließt eine
+   gehostete Sitzung genauso wie bei Vier Gewinnt.
+5. **Freundschaftsspiele bleiben ohne Wertung.** `GameSetup` schickt
+   `friendly: true`, wenn beim Anlegen „Freundschaftsspiel“ gewählt wurde;
+   `GameSessionWindow` reicht das Kennzeichen an `RecordGameContext` weiter.
+   Direkt gespielte Partien setzen es in `PlayView` immer. Der Server speichert
+   Verlauf und Ergebnis trotzdem, schreibt aber `player_ratings` nicht fort.
+   `GET /api/ratings` liefert die Elo-Stände für Profil und Spielkarten.
 
 Eine Pause setzt weder `outcome` noch `finished_at`. Beide dürfen laut
 `chk_session_outcome` in `game_sessions` nur zusammen gesetzt werden; der
@@ -367,10 +392,11 @@ entsprechen den serverseitigen Prüfungen in `backend/src/api.rs` und sind in
   Fenster könnten ihr Ergebnis nicht eindeutig zuordnen. Die Oberfläche weist
   deshalb darauf hin, wenn schon eine Partie offen ist – eine pausierte Sitzung
   zählt dabei als offen. Die Direktansicht (`/play`) ist nicht betroffen.
-* **Nur Connect Four ist spielbar.** Das liegt an `useConnectFour.ts`: der Hook
-  enthält die Spiellogik fest, andere Spiele brauchen eigene Hooks. Das Backend
-  kennt die Routen für `/connectfour` und `/tictactoe`, das Frontend nutzt
-  bislang nur die erste.
+* **Die neuen Spiele sind Zweipersonen-Fassungen.** Tic Tac Toe, Memory, Schach
+  und Mensch ärgere dich nicht nutzen die vorhandenen Plätze Rot und Gelb;
+  mehr als zwei Personen pro Sitzung sieht das Datenmodell der Oberfläche nicht
+  vor. Schach prüft serverseitig die Struktur des Verlaufs, die vollständigen
+  Regeln (Rochade, Matt) liegen im Frontend.
 * **Ein Brett pro Browser.** Ohne Server gibt es keine Sitzungs-IDs, die
   werkzeugübergreifend eindeutig sind – die Daten sind an Browser und
   Rechner gebunden.

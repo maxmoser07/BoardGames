@@ -100,14 +100,17 @@ describe("Router", () => {
     assert.deepEqual(parseRoute("/games/a/b"), { name: "notFound", path: "/games/a/b" });
     assert.deepEqual(parseRoute("/connectfour/"), { name: "notFound", path: "/connectfour" });
     assert.deepEqual(parseRoute("/connectfour/a/b"), { name: "notFound", path: "/connectfour/a/b" });
-    // Nur Connect Four hat eine Fenster-Route.
-    assert.deepEqual(parseRoute("/tictactoe/s-abc"), { name: "notFound", path: "/tictactoe/s-abc" });
+    // Jedes spielbare Spiel hat inzwischen eine Fenster-Route.
+    assert.deepEqual(parseRoute("/tictactoe/s-abc"), { name: "game", sessionId: "s-abc" });
   });
 
   it("baut Pfade für Einstellungen und Fenster", () => {
     assert.equal(setupPath("connect-four"), "/games/connect-four");
     assert.equal(windowPath("connect-four", "s-a1b2c3"), "/connectfour/s-a1b2c3");
-    assert.equal(windowPath("tictactoe", "s-a1b2c3"), null);
+    assert.equal(windowPath("tictactoe", "s-a1b2c3"), "/tictactoe/s-a1b2c3");
+    assert.equal(windowPath("schach", "12"), "/schach/12");
+    assert.equal(windowPath("mensch-aergere-dich-nicht", "12"), "/mensch-aergere-dich-nicht/12");
+    assert.equal(windowPath("unbekannt", "12"), null);
   });
 });
 
@@ -121,11 +124,12 @@ describe("Spielekatalog", () => {
     assert.ok(connectFour.rules.length > 0);
   });
 
-  it("markiert alle übrigen Spiele als in Arbeit", () => {
+  it("macht alle Katalogspiele spielbar", () => {
     const others = GAME_TYPES.filter((game) => game.name !== "connect-four");
     assert.ok(others.length > 0, "der Katalog braucht weitere Spiele als Visualisierung");
     for (const game of others) {
-      assert.equal(game.implemented, false, `${game.name} sollte noch nicht spielbar sein`);
+      assert.equal(game.implemented, true, `${game.name} sollte spielbar sein`);
+      assert.equal(game.maxPlayers, 2, `${game.name} ist auf zwei Personen ausgelegt`);
     }
   });
 

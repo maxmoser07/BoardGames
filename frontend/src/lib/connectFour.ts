@@ -71,7 +71,7 @@ export function validateConnectFourResult(result: ConnectFourResult): void {
 }
 
 /** Kurzstatistik für die Ergebnisliste. */
-export function summariseMoves(moves: ConnectFourResult["moves"]): {
+export function summariseMoves(moves: readonly { player: Side }[]): {
   red: number;
   yellow: number;
   lastTurn: number;
@@ -87,9 +87,12 @@ export function summariseMoves(moves: ConnectFourResult["moves"]): {
  * Spielt die Züge auf ein 6x7-Raster zurück – für die Miniaturansicht in der
  * Historie, ohne das echte Brett erneut zu berechnen.
  */
-export function buildGrid(moves: ConnectFourResult["moves"]): (Side | null)[][] {
+export function buildGrid(
+  moves: readonly { player: Side; location?: { x: number; y: number } | null }[],
+): (Side | null)[][] {
   const grid: (Side | null)[][] = Array.from({ length: ROWS }, () => Array<Side | null>(COLS).fill(null));
   for (const move of moves) {
+    if (!move.location) continue;
     const { x, y } = move.location;
     if (x >= 0 && x < COLS && y >= 0 && y < ROWS) grid[y][x] = move.player;
   }

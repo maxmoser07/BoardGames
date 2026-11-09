@@ -1,13 +1,14 @@
 import { useMemo } from "react";
-import { CircleUser } from "lucide-react";
+import { CircleUser, Trophy } from "lucide-react";
 
 import { AppShell } from "./components/AppShell";
-import { Avatar, Notice, RoleChip, Skeleton } from "./components/ui";
+import { Avatar, EmptyState, Notice, RoleChip, Skeleton } from "./components/ui";
 import { useLiveData } from "./hooks/useLiveData";
 import { api } from "./lib/api";
 import { useAuth } from "./lib/auth";
 import { formatDateTime } from "./lib/format";
-import type { User } from "./types";
+import { findGameType } from "./lib/gameTypes";
+import type { PlayerRating, User } from "./types";
 
 /**
  * Gespeichertes Profil der angemeldeten Person. Die Kennzahlen werden aus den
@@ -23,6 +24,7 @@ const ProfileView: React.FC = () => {
   );
   const games = useLiveData(() => api.listGames());
   const sessions = useLiveData(() => api.listSessions());
+  const ratings = useLiveData(() => api.listRatings());
 
   const stats = useMemo(() => {
     const mine = (games.data ?? []).filter(
@@ -46,8 +48,34 @@ const ProfileView: React.FC = () => {
     };
   }, [userId, games.data, sessions.data]);
 
-  const loading = profile.loading || games.loading || sessions.loading;
-  const loadError = profile.error ?? games.error ?? sessions.error;
+  /**
+   * Nur die eigene Wertung, sortiert wie der Spielkatalog. Das Backend liefert
+   * für jedes Spiel eine Zeile – auch ohne gewertete Partie, dann mit dem
+   * Startwert 1200.
+   */
+  const myRatings = useMemo<PlayerRating[]>(() => {
+    return (ratings.data ?? [])
+      .filter((rating) => rating.userId === userId)
+      .sort((a, b) => {
+        const left = findGameType(a.gameType)?.sortOrder ?? Number.MAX_SAFE_INTEGER;
+        const right = findGameType(b.gameType)?.sortOrder ?? Number.MAX_SAFE_INTEGER;
+        return left - right || a.gameType.localeCompare(b.gameType);
+      });
+  }, [ratings.data, userId]);
+
+  /** Durchschnitt der Spielwertungen; 1200, solange nichts geladen ist. */
+  const overallRating = useMemo(() => {
+    if (myRatings.length === 0) return 1200;
+    return Math.round(myRatings.reduce((sum, rating) => sum + rating.rating, 0) / myRatings.length);
+  }, [myRatings]);
+
+  const ratedGames = useMemo(
+    () => myRatings.reduce((sum, rating) => sum + rating.gamesPlayed, 0),
+    [myRatings],
+  );
+
+  const loading = profile.loading || games.loading || sessions.loading || ratings.loading;
+  const loadError = profile.error ?? games.error ?? sessions.error ?? ratings.error;
   const user = profile.data ?? authUser;
 
   return (
@@ -121,6 +149,52 @@ const ProfileView: React.FC = () => {
                 <dd>{user.id}</dd>
               </div>
             </dl>
+          </section>
+
+          <section className="card rating" aria-labelledby="rating-title">
+            <header className="rating__head">
+              <span className="panel__icon" aria-hidden="true">
+                <Trophy size={20} />
+              </span>
+              <div className="rating__intro">
+                <h2 className="rating__title" id="rating-title">
+                  Wertung
+                </h2>
+                <p className="rating__hint">
+                  Elo-Wertung aus gewerteten Partien. Freundschaftsspiele werden gespeichert,
+                  verändern die Wertung aber nicht.
+                </p>
+              </div>
+              <div className="rating__overall">
+                <span className="rating__overall-value">{overallRating}</span>
+                <span className="rating__overall-label">
+                  gesamt · {ratedGames} {ratedGames === 1 ? "Partie" : "Partien"}
+                </span>
+              </div>
+            </header>
+
+            {myRatings.length === 0 ? (
+              <EmptyState icon={Trophy} title="Noch keine Wertung">
+                Sobald du eine gewertete Partie spielst, erscheint hier dein Stand.
+              </EmptyState>
+            ) : (
+              <ul className="rating__list">
+                {myRatings.map((rating) => {
+                  const game = findGameType(rating.gameType);
+                  return (
+                    <li className="rating__row" key={`${rating.userId}-${rating.gameType}`}>
+                      <span className="rating__game">{game?.displayName ?? rating.gameType}</span>
+                      <span className="rating__record">
+                        {rating.gamesPlayed === 0
+                          ? "noch keine gewertete Partie"
+                          : `${rating.wins} S · ${rating.draws} U · ${rating.losses} N`}
+                      </span>
+                      <span className="rating__value">{rating.rating}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </section>
         </>
       ) : (

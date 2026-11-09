@@ -111,11 +111,17 @@ export interface GameSession {
    * `backend/migrations/20251007000001_seed_demo_session.sql`, kein echtes Spiel.
    */
   demo?: boolean;
+  /**
+   * true = Freundschaftsspiel. Verlauf und Ergebnis werden gespeichert,
+   * fließen aber nicht in die Wertung ein.
+   */
+  friendly?: boolean;
 }
 
-/* ---------------------------------------------------------------- Connect Four
- * Bildet das JSON ab, das `useConnectFour.ts` an
- * POST /api/connect-four/games schickt. x = Spalte, y = Zeile (0-basiert).
+/* ---------------------------------------------------------------- Spielzüge
+ * Ein Zug ist spielunabhängig: `turn` und `player` gelten überall, die
+ * Details stecken in `payload`. Für Raster-Spiele (Vier Gewinnt, Tic Tac Toe)
+ * gibt es zusätzlich `location`; die übrigen Spiele nutzen nur `payload`.
  */
 
 export interface ConnectFourLocation {
@@ -123,14 +129,32 @@ export interface ConnectFourLocation {
   y: number;
 }
 
-export interface ConnectFourMove {
+export interface GameMove {
   turn: number;
   player: Side;
+  /** Rasterposition, `null`/fehlend bei Spielen ohne festes Raster. */
+  location?: ConnectFourLocation | null;
+  /** Spielspezifische Angaben, z. B. Karte, Würfel, von/nach. */
+  payload?: Record<string, unknown>;
+}
+
+/* ---------------------------------------------------------------- Connect Four
+ * Bildet das JSON ab, das `useConnectFour.ts` an
+ * POST /api/connect-four/games schickt. x = Spalte, y = Zeile (0-basiert).
+ */
+
+export interface ConnectFourMove extends GameMove {
   location: ConnectFourLocation;
 }
 
 export interface ConnectFourResult {
   moves: ConnectFourMove[];
+  winner: Side | "draw";
+}
+
+/** Ergebnis eines beliebigen Spiels; `moves` tragen die Details im `payload`. */
+export interface BoardGameResult {
+  moves: GameMove[];
   winner: Side | "draw";
 }
 
@@ -141,12 +165,14 @@ export interface RecordedGame {
   sessionId: string | null;
   gameType: string;
   winner: Side | "draw";
-  moves: ConnectFourMove[];
+  moves: GameMove[];
   playedAt: string;
   durationMs: number;
   players: Record<Side, number | null>;
   /** true = Beispieldatensatz aus `lib/api.ts`, kein Spiel aus diesem Browser. */
   demo?: boolean;
+  /** true = Freundschaftsspiel; das Ergebnis bleibt ohne Wertung. */
+  friendly?: boolean;
 }
 
 /* ------------------------------------------------------------------ Ableitungen */
@@ -215,6 +241,18 @@ export function winnerToOutcome(winner: Side | "draw"): GameOutcome {
 }
 
 export type ReportStatus = "open" | "reviewed" | "resolved" | "dismissed";
+
+/** Wertungsstand einer Person für ein Spiel; Startwert ist 1200. */
+export interface PlayerRating {
+  userId: number;
+  username: string;
+  gameType: string;
+  rating: number;
+  gamesPlayed: number;
+  wins: number;
+  losses: number;
+  draws: number;
+}
 
 export interface PlayerReport {
   id: number;

@@ -51,12 +51,12 @@ export const App: React.FC = () => {
         <NoAccess message="Meldungen und Benutzerverwaltung sind nur für Admins." />
       );
     case "play":
-      return <PlayView />;
+      return <PlayView key={route.gameName ?? "auswahl"} gameName={route.gameName} />;
     case "camera":
       return <CameraView />;
     case "game":
       // `key` sorgt dafür, dass beim Wechsel auf eine andere Sitzung das Brett
-      // neu aufgebaut wird (Zustand liegt in useConnectFour).
+      // neu aufgebaut wird (Zustand liegt in useConnectFour bzw. im jeweiligen Spiel).
       return <GameSessionWindow key={route.sessionId} sessionId={route.sessionId} />;
     case "notFound":
       return (
@@ -72,8 +72,8 @@ export const App: React.FC = () => {
               }
             >
               Erlaubt sind <code>/</code>, <code>/games/&lt;name&gt;</code>, <code>/play</code>,{" "}
-              <code>/camera</code>, <code>/sessions</code>, <code>/reports</code>,{" "}
-              <code>/profile</code> und <code>/connectfour/&lt;id&gt;</code>.
+              <code>/play/&lt;name&gt;</code>, <code>/camera</code>, <code>/sessions</code>,{" "}
+              <code>/reports</code>, <code>/profile</code> und <code>/&lt;spiel&gt;/&lt;id&gt;</code>.
             </Notice>
           </main>
         </div>

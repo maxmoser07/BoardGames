@@ -31,12 +31,13 @@ export function GameCard({ game, session, users }: GameCardProps) {
 
   return (
     <li className="card game">
-      <GamePreview moves={game.moves} />
+      <GamePreview gameType={game.gameType} moves={game.moves} />
 
       <div className="game__body">
         <p className="game__headline">
           <Badge tone={WINNER_TONE[game.winner]}>{label}</Badge>
           {game.demo ? <span className="chip chip--demo">Beispiel</span> : null}
+          {game.friendly ? <span className="chip chip--friendly">Freundschaftsspiel</span> : null}
         </p>
 
         <p className="game__players">

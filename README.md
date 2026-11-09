@@ -1,8 +1,9 @@
 # BoardGames
 
 Sitzungen fuer Brettspiele hosten, Spielfelder in eigenen Fenstern oeffnen und
-Spielverlaeufe sammeln. Connect Four ist die erste umgesetzte Partie, das
-Datenmodell ist bereits Spielunabhaengig. Waehrend der Partie zeigt das Brett
+Spielverlaeufe sammeln. Spielbar sind Vier Gewinnt, Tic Tac Toe, Memory,
+Schach und Mensch aergere dich nicht; das Datenmodell ist
+spielunabhaengig. Waehrend der Partie zeigt das Brett
 laufend geschaetzte Gewinnchancen und einen Zugtipp; die Bewertung laeuft im
 Browser und ist im Frontend-README unter „Live-Gewinnchancen“ beschrieben.
 
@@ -41,9 +42,15 @@ alle das Passwort `password`:
 | `Bob`      | player | nur spielen                                              |
 | `Mara`     | admin  | alles: Sitzungen, Meldungen, Benutzer, Beispieldaten     |
 
-Nach dem Login siehst du den Katalog mit „Vier Gewinnt“, unter „Sitzungen“ (als
-Host/Admin) eine Beispielpartie. Neue Konten ueber „Konto erstellen“ sind
-immer `player`; Rollen vergibt nur die Administration.
+Nach dem Login siehst du den Katalog mit allen fünf Spielen, unter
+„Sitzungen“ (als Host/Admin) eine Beispielpartie. Neue Konten ueber
+„Konto erstellen“ sind immer `player`; Rollen vergibt nur die Administration.
+
+Beim Anlegen einer Sitzung waehlst du zwischen **Gewertet** und
+**Freundschaftsspiel**. Ein Freundschaftsspiel wird mit vollem Verlauf und
+Ergebnis gespeichert, veraendert aber keine Wertung. Direkt gespielte Partien
+aus `/play` sind immer Freundschaftsspiele. Die eigene Elo-Wertung je Spiel
+steht im Profil.
 
 | Adresse                          | Inhalt                                      |
 | -------------------------------- | ------------------------------------------- |
@@ -287,6 +294,7 @@ Datenzugriff der Oberflaeche:
 | GET     | `/api/admin/users`                      | Benutzerverwaltung (nur Admin)         |
 | PATCH   | `/api/admin/users/{id}`                 | Rolle/Sperre aendern (nur Admin)       |
 | GET     | `/api/games`                            | Spieltypen aus `game_types`            |
+| GET     | `/api/ratings`                          | Wertungsstand je Person und Spiel      |
 | GET     | `/api/sessions`                         | gehostete Sitzungen, neueste zuerst    |
 | POST    | `/api/sessions`                         | Sitzung anlegen (Host/Admin)           |
 | GET     | `/api/sessions/{id}`                    | eine Sitzung                           |
@@ -294,9 +302,11 @@ Datenzugriff der Oberflaeche:
 | POST    | `/api/sessions/{id}/resume`             | Pause abschliessen, Pausenzeit addieren |
 | POST    | `/api/sessions/{id}/abort`              | Sitzung abbrechen                      |
 | POST    | `/api/sessions/{id}/surrender`          | Aufgabe, Gegner gewinnt                |
-| POST    | `/api/connect-four/games`               | Partie speichern, Sitzung schliessen   |
-| GET     | `/api/connect-four/games`               | alle Verlaeufe                         |
-| GET     | `/api/connect-four/games/{session_id}`  | eine Partie                            |
+| POST    | `/api/connect-four/games`               | Vier-Gewinnt-Partie speichern, Sitzung schliessen |
+| GET     | `/api/connect-four/games`               | alle Vier-Gewinnt-Verlaeufe            |
+| GET     | `/api/connect-four/games/{session_id}`  | eine Vier-Gewinnt-Partie               |
+| POST    | `/api/games/{game_name}/results`        | Partie eines beliebigen Spiels speichern |
+| GET     | `/api/games/results`                    | alle Verlaeufe aller Spiele            |
 | DELETE  | `/api/demo-data`                        | Beispielpartie loeschen (nur Admin)    |
 | GET     | `/api/reports`                          | Spieler-Meldungen (nur Admin; Filter: status, reported_user_id, reporter_id) |
 | POST    | `/api/reports`                          | Meldung anlegen (nur Admin)            |
@@ -306,15 +316,27 @@ Datenzugriff der Oberflaeche:
 
 Die Zustaende ohne eigene Spalte liegen in `game_sessions.metadata_json`:
 `paused_at`, `paused_ms`, `abort_reason`, `surrendered_by`, `winner_side` sowie
-die Kennzeichen `demo` und `ad_hoc`. Eine gehostete Partie ist dieselbe Zeile wie
-ihre Sitzung - `POST /api/connect-four/games` schliesst sie, statt eine zweite
-Sitzung anzulegen. Partien aus `/play` ohne Sitzung bekommen eine eigene Zeile
-mit `ad_hoc`.
+die Kennzeichen `demo`, `ad_hoc` und `friendly`. Eine gehostete Partie ist
+dieselbe Zeile wie ihre Sitzung - `POST /api/connect-four/games` beziehungsweise
+`POST /api/games/{game_name}/results` schliesst sie, statt eine zweite Sitzung
+anzulegen. Partien aus `/play` ohne Sitzung bekommen eine eigene Zeile mit
+`ad_hoc`, sind immer freundschaftlich und damit ungewertet. Die spielspezifischen
+Angaben eines Zuges stehen im JSON-Feld `moves.payload`; Vier Gewinnt und Tic
+Tac Toe nutzen zusaetzlich `location`.
+
+`POST /api/sessions` nimmt optional `"friendly": true` an. Ohne den Schalter
+entsteht eine gewertete Sitzung. Nur wenn beide Plaetze mit verschiedenen Konten
+besetzt sind, kein Beispieldatensatz vorliegt und das Ergebnis `win` oder `draw`
+ist, schreibt das Backend die Elo-Wertung in `player_ratings` fort (K = 32,
+Startwert 1200, Untergrenze 100). Eine Aufgabe zaehlt dabei als Sieg fuer die
+andere Seite. Freundschaftsspiele, Abbrueche und Ad-hoc-Partien lassen
+`player_ratings` unveraendert. `GET /api/ratings` liefert trotzdem fuer jedes
+Spiel eine Zeile, notfalls mit dem Startwert und leeren Zaehlern.
 
 ## Pruefen
 
 ```bash
-npm test                    # Router, Ableitungen, Ergebnis-Pruefung (Node, ohne Browser)
+npm test                    # Router, Spiellogik, Ableitungen (Node, ohne Browser)
 npm run lint                # eslint inkl. React-Compiler-Regeln
 npm run build               # tsc -b && vite build -> frontend/dist/
 npm run backend:check       # cargo check
@@ -356,6 +378,9 @@ Rust-Abgleich siehe die Kommentare in
 * **Eine offene Sitzung zur Zeit.** `POST /api/sessions` lehnt ab, wenn bereits
   eine laeuft (`outcome IS NULL`). Das entspricht der Regel der Oberflaeche,
   gilt aber fuer alle zusammen und nicht je Person.
+* **Wertungen starten bei 1200.** Die Migration legt keine Zeilen an und
+  berechnet keine frueheren Sitzungen nach. Die erste gewertete Partie nach
+  dem Update beginnt daher fuer beide Seiten beim Startwert.
 * **`website/boardgames/`** war ein veraltetes Duplikat des Frontends und wurde
   nach `frontend/` verschoben. Das Original steckt in der Git-Historie. Was noch
   davon da ist, ist ein alter `dist/`-Ordner, also Ausgabe und kein eigenes

@@ -5,9 +5,10 @@
  *   /                    Spielekatalog
  *   /games/:name         Einstellungen eines Spiels
  *   /sessions            Sitzungen und Spielverläufe
- *   /play                Partie ohne Sitzung, direkt im Tab
+ *   /play                Auswahl für eine Partie ohne Sitzung
+ *   /play/:name          Partie eines Spiels ohne Sitzung, direkt im Tab
  *   /camera              Physisches Brett per Laptop-Kamera tracken
- *   /connectfour/:id     Spielfeld-Fenster (wird als Pop-up geöffnet)
+ *   /:spiel/:id          Spielfeld-Fenster (wird als Pop-up geöffnet)
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -19,18 +20,21 @@ export type Route =
   | { name: "setup"; gameName: string }
   | { name: "sessions" }
   | { name: "reports" }
-  | { name: "play" }
+  | { name: "play"; gameName?: string }
   | { name: "camera" }
   | { name: "game"; sessionId: string }
   | { name: "notFound"; path: string };
 
 /**
- * Fenster-Routen nach URL-Abschnitt (`/connectfour/:id`) auf den Spielnamen.
- * Nur Connect Four ist spielbar, deshalb gibt es nur diesen Eintrag; weitere
- * Spiele kommen hier dazu, sobald sie umgesetzt sind.
+ * Fenster-Routen nach URL-Abschnitt auf den Spielnamen. Jedes spielbare Spiel
+ * hat ein eigenes Pop-up; der Abschnitt ist die kurze, stabile Adresse.
  */
 const WINDOW_ROUTES: Record<string, string> = {
   connectfour: "connect-four",
+  tictactoe: "tictactoe",
+  memory: "memory",
+  schach: "schach",
+  "mensch-aergere-dich-nicht": "mensch-aergere-dich-nicht",
 };
 
 export function parseRoute(pathname: string): Route {
@@ -43,6 +47,9 @@ export function parseRoute(pathname: string): Route {
   if (path === "/reports") return { name: "reports" };
   if (path === "/play") return { name: "play" };
   if (path === "/camera") return { name: "camera" };
+
+  const direct = /^\/play\/([A-Za-z0-9_-]+)$/.exec(path);
+  if (direct) return { name: "play", gameName: direct[1] };
 
   const setup = /^\/games\/([A-Za-z0-9_-]+)$/.exec(path);
   if (setup) return { name: "setup", gameName: setup[1] };

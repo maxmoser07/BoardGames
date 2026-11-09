@@ -37,10 +37,12 @@
  */
 
 import {
+  type BoardGameResult,
   type ConnectFourResult,
   type GameOutcome,
   type GameSession,
   type GameType,
+  type PlayerRating,
   type PlayerReport,
   type RecordedGame,
   type ReportStatus,
@@ -56,6 +58,8 @@ export interface CreateSessionInput {
   gameType: string;
   hostId: number;
   players: Record<Side, number>;
+  /** true = Freundschaftsspiel ohne Wertung. */
+  friendly?: boolean;
 }
 
 export interface RecordGameContext {
@@ -64,6 +68,8 @@ export interface RecordGameContext {
   startedAt: number;
   /** Bis zum Partieende angehaltene Zeit – wird von der Dauer abgezogen. */
   pausedMs: number;
+  /** Nur für Partien ohne Sitzung; dort sind alle Ergebnisse ungewertet. */
+  friendly?: boolean;
 }
 
 export interface Api {
@@ -74,6 +80,7 @@ export interface Api {
   logout(): Promise<void>;
   getGameTypes(): Promise<GameType[]>;
   getGameType(name: string): Promise<GameType | null>;
+  listRatings(): Promise<PlayerRating[]>;
   listSessions(): Promise<GameSession[]>;
   getSession(id: string): Promise<GameSession | null>;
   createSession(input: CreateSessionInput): Promise<GameSession>;
@@ -82,6 +89,8 @@ export interface Api {
   abortSession(id: string): Promise<GameSession>;
   surrenderSession(id: string, userId: number): Promise<GameSession>;
   recordConnectFourGame(result: ConnectFourResult, context: RecordGameContext): Promise<RecordedGame>;
+  /** Speichert eine beendete Partie eines beliebigen Spiels. */
+  recordGame(gameType: string, result: BoardGameResult, context: RecordGameContext): Promise<void>;
   listGames(): Promise<RecordedGame[]>;
   clearDemoData(): Promise<void>;
   getReports(filter?: { status?: ReportStatus; reportedUserId?: number; reporterId?: number }): Promise<PlayerReport[]>;
@@ -156,12 +165,13 @@ interface WireSession {
   surrendered_by: number | null;
   demo: boolean;
   ad_hoc: boolean;
+  friendly: boolean;
   players: WirePlayer[];
 }
 
 interface WireMove {
   move_index: number;
-  payload: { col: number; row: number; side: Side };
+  payload: Record<string, unknown> & { side?: Side; col?: number; row?: number };
 }
 
 interface WireGame {
@@ -182,6 +192,17 @@ interface WireReport {
   created_at: string;
   updated_at: string;
   reviewed_at: string | null;
+}
+
+interface WireRating {
+  user_id: number;
+  username: string;
+  game_type: string;
+  rating: number;
+  games_played: number;
+  wins: number;
+  losses: number;
+  draws: number;
 }
 
 /* ---------------------------------------------------------- HTTP-Grundlagen */
@@ -284,6 +305,7 @@ function toSession(wire: WireSession): GameSession {
     pausedAt: wire.paused_at,
     pausedMs: wire.paused_ms,
     demo: wire.demo,
+    friendly: wire.friendly,
   };
 }
 
@@ -295,15 +317,22 @@ function toGame(wire: WireGame): RecordedGame {
     sessionId: session.ad_hoc ? null : String(session.id),
     gameType: session.game_type,
     winner: session.outcome === "draw" ? "draw" : (session.winner_side ?? "draw"),
-    moves: wire.moves.map((move) => ({
-      turn: move.move_index,
-      player: move.payload.side,
-      location: { x: move.payload.col, y: move.payload.row },
-    })),
+    moves: wire.moves.map((move) => {
+      const payload = move.payload ?? {};
+      const col = typeof payload.col === "number" ? payload.col : null;
+      const row = typeof payload.row === "number" ? payload.row : null;
+      return {
+        turn: move.move_index,
+        player: (payload.side as Side | undefined) ?? "red",
+        location: col !== null && row !== null ? { x: col, y: row } : null,
+        payload,
+      };
+    }),
     playedAt: session.finished_at ?? session.started_at,
     durationMs: session.duration_ms ?? 0,
     players: { red: playerOf(session, "red"), yellow: playerOf(session, "yellow") },
     demo: session.demo,
+    friendly: session.friendly,
   };
 }
 
@@ -353,10 +382,10 @@ async function logout(): Promise<void> {
 }
 
 /**
- * Die technischen Spielen kommen aus der Datenbank, der Katalog (Regeln,
- * Vorschau, Reihenfolge) aus `lib/gameTypes.ts`. Deshalb werden beide
- * zusammengefuehrt statt eines das andere zu ersetzen: nur so erscheinen auch
- * die fuenf "in Arbeit"-Eintraege, die es nicht in `game_types` gibt.
+ * Die technischen Spiele kommen aus der Datenbank, der Katalog (Regeln,
+ * Vorschau, Reihenfolge) aus `lib/gameTypes.ts`. Beide werden zusammengefuehrt,
+ * damit Anzeige und Datenbank-Id auch dann stimmen, wenn eine Migration noch
+ * nicht gelaufen ist.
  */
 async function getGameTypes(): Promise<GameType[]> {
   const rows = await request<WireGameType[]>("/games");
@@ -370,6 +399,25 @@ async function getGameTypes(): Promise<GameType[]> {
 async function getGameType(name: string): Promise<GameType | null> {
   const games = await getGameTypes();
   return games.find((game) => game.name === name) ?? null;
+}
+
+function toRating(wire: WireRating): PlayerRating {
+  return {
+    userId: wire.user_id,
+    username: wire.username,
+    gameType: wire.game_type,
+    rating: wire.rating,
+    gamesPlayed: wire.games_played,
+    wins: wire.wins,
+    losses: wire.losses,
+    draws: wire.draws,
+  };
+}
+
+/** Wertungsstand je Person und Spiel. Freundschaftsspiele sind dort nie enthalten. */
+async function listRatings(): Promise<PlayerRating[]> {
+  const rows = await request<WireRating[]>("/ratings");
+  return rows.map(toRating);
 }
 
 async function listSessions(): Promise<GameSession[]> {
@@ -390,7 +438,9 @@ async function getSession(id: string): Promise<GameSession | null> {
 }
 
 async function listGames(): Promise<RecordedGame[]> {
-  const rows = await request<WireGame[]>("/connect-four/games");
+  // Alle Spiele in einer Liste: die Historie ist spielunabhängig, und die
+  // Oberfläche filtert nach `gameType`.
+  const rows = await request<WireGame[]>("/games/results");
   return rows.map(toGame).sort(byNewest);
 }
 
@@ -410,6 +460,7 @@ async function createSession(input: CreateSessionInput): Promise<GameSession> {
       game_type: input.gameType,
       host_id: input.hostId,
       players: input.players,
+      friendly: input.friendly ?? false,
     }),
   });
   notify();
@@ -452,7 +503,12 @@ async function recordConnectFourGame(
 
   const created = await request<{ session_id: number }>("/connect-four/games", {
     method: "POST",
-    body: JSON.stringify({ ...result, duration_ms: durationMs, session_id: sessionId }),
+    body: JSON.stringify({
+      ...result,
+      duration_ms: durationMs,
+      session_id: sessionId,
+      friendly: context.friendly ?? true,
+    }),
   });
 
   // Das Gepeicherte zurücklesen statt zusammenzubauen: so zeigt die Oberflaeche
@@ -460,6 +516,34 @@ async function recordConnectFourGame(
   const stored = await request<WireGame>(`/connect-four/games/${created.session_id}`);
   notify();
   return toGame(stored);
+}
+
+/**
+ * Speichert eine beendete Partie eines der neuen Brettspiele.
+ *
+ * Die Route ist spielunabhängig (`/api/games/{name}/results`); den Verlauf
+ * prüft der Server je nach Spiel. Wie bei Vier Gewinnt wird die gehostete
+ * Sitzung mit derselben Zeile geschlossen.
+ */
+async function recordGame(
+  gameType: string,
+  result: BoardGameResult,
+  context: RecordGameContext,
+): Promise<void> {
+  const durationMs = Math.max(0, Math.round(Date.now() - context.startedAt - context.pausedMs));
+  const sessionId = context.sessionId !== null && isStoredId(context.sessionId) ? Number(context.sessionId) : null;
+
+  await request(`/games/${encodeURIComponent(gameType)}/results`, {
+    method: "POST",
+    body: JSON.stringify({
+      moves: result.moves,
+      winner: result.winner,
+      duration_ms: durationMs,
+      session_id: sessionId,
+      friendly: context.friendly ?? true,
+    }),
+  });
+  notify();
 }
 
 async function clearDemoData(): Promise<void> {
@@ -579,6 +663,7 @@ export const httpApi: Api = {
   logout,
   getGameTypes,
   getGameType,
+  listRatings,
   listSessions,
   getSession,
   createSession,
@@ -587,6 +672,7 @@ export const httpApi: Api = {
   abortSession,
   surrenderSession,
   recordConnectFourGame,
+  recordGame,
   listGames,
   clearDemoData,
   getReports,

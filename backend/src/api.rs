@@ -18,7 +18,8 @@ use sqlx::mysql::MySqlPool;
 use sqlx::{MySql, QueryBuilder, Transaction};
 
 use crate::db::{
-    AdminUser, AuthUser, GameMove, GameType, PlayerReport, Session, SessionPlayer, User, UserProfile,
+    AdminUser, AuthUser, GameMove, GameType, PlayerRating, PlayerReport, Session, SessionPlayer,
+    User, UserProfile,
 };
 
 pub const CONNECT_FOUR: &str = "connect-four";
@@ -46,6 +47,7 @@ type Board = [[Option<usize>; COLS]; ROWS];
 /// umwandeln kann.
 const SESSION_COLUMNS: &str = "
     SELECT s.id,
+           gt.id AS game_type_id,
            gt.name AS game_type,
            s.host_id,
            s.outcome,
@@ -66,6 +68,7 @@ const SESSION_COLUMNS: &str = "
            -- Vergleich mit TRUE statt eines Casts.
            IF(JSON_EXTRACT(s.metadata_json, '$.demo') = TRUE, 1, 0) AS demo,
            IF(JSON_EXTRACT(s.metadata_json, '$.ad_hoc') = TRUE, 1, 0) AS ad_hoc,
+           IF(JSON_EXTRACT(s.metadata_json, '$.friendly') = TRUE, 1, 0) AS friendly,
            s.metadata_json
     FROM game_sessions s
     JOIN game_types gt ON gt.id = s.game_type_id
@@ -336,6 +339,7 @@ pub fn router() -> Router<MySqlPool> {
         .route("/api/admin/users/{id}", patch(update_admin_user))
         .route("/api/admin/users/{id}", put(update_admin_user))
         .route("/api/games", get(list_game_types))
+        .route("/api/ratings", get(list_ratings))
         .route("/api/sessions", get(list_sessions))
         .route("/api/sessions", post(create_session))
         .route("/api/sessions/{id}", get(read_session))
@@ -351,6 +355,11 @@ pub fn router() -> Router<MySqlPool> {
         .route(
             "/api/connect-four/games/{session_id}",
             get(read_connect_four_game),
+        )
+        .route("/api/games/results", get(list_all_games))
+        .route(
+            "/api/games/{game_name}/results",
+            post(record_board_game),
         )
         .route("/api/demo-data", delete(delete_demo_data))
         .route("/api/reports", get(list_reports))
@@ -530,6 +539,7 @@ fn session_json(session: &Session, players: &[SessionPlayer]) -> Value {
         "surrendered_by": session.surrendered_by,
         "demo": session.demo != 0,
         "ad_hoc": session.ad_hoc != 0,
+        "friendly": session.friendly != 0,
         "players": players,
     })
 }
@@ -756,6 +766,40 @@ pub async fn list_game_types(
     Ok(Json(json!(games)))
 }
 
+/// Wertungsstand aller spielberechtigten Personen, je Spiel eine Zeile.
+///
+/// Die Tabelle `player_ratings` enthaelt nur Kombinationen, die schon ein
+/// gewertetes Ergebnis hatten. Der `LEFT JOIN` liefert fuer alle anderen den
+/// Startwert 1200 und lauter Nullen - so muss die Oberflaeche nicht selbst
+/// raten, welche Zeile fehlt. Freundschaftsspiele tauchen hier nie auf, weil
+/// `apply_rating` sie nicht fortschreibt.
+pub async fn list_ratings(
+    State(pool): State<MySqlPool>,
+    _user: CurrentUser,
+) -> Result<Json<Value>, ApiError> {
+    let ratings = sqlx::query_as::<_, PlayerRating>(
+        "SELECT u.id AS user_id,
+                u.username,
+                gt.name AS game_type,
+                COALESCE(r.rating, 1200) AS rating,
+                CAST(COALESCE(r.games_played, 0) AS UNSIGNED) AS games_played,
+                CAST(COALESCE(r.wins, 0) AS UNSIGNED) AS wins,
+                CAST(COALESCE(r.losses, 0) AS UNSIGNED) AS losses,
+                CAST(COALESCE(r.draws, 0) AS UNSIGNED) AS draws
+         FROM users u
+         JOIN v_user_permissions p ON p.id = u.id
+         CROSS JOIN game_types gt
+         LEFT JOIN player_ratings r
+                ON r.user_id = u.id AND r.game_type_id = gt.id
+         WHERE p.can_play
+         ORDER BY u.id, gt.id",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(internal)?;
+    Ok(Json(json!(ratings)))
+}
+
 /* ------------------------------------------------------------------ Sitzungen */
 
 /// Gehostete Sitzungen, neueste zuerst.
@@ -799,6 +843,10 @@ pub struct CreateSessionDto {
     game_type: String,
     host_id: u64,
     players: SeatPair,
+    /// `true` = Freundschaftsspiel; Ergebnis und Verlauf bleiben erhalten,
+    /// aber `player_ratings` wird nicht fortgeschrieben.
+    #[serde(default)]
+    friendly: bool,
 }
 
 /// `red` und `yellow` sind Sitzplaetze, keine Farben (siehe `types.ts`).
@@ -873,7 +921,12 @@ pub async fn create_session(
     }
 
     let mut tx = pool.begin().await.map_err(|e| ApiError::Internal(e.into()))?;
-    let session_id = insert_session(&mut tx, game_type_id, Some(dto.host_id), None).await?;
+    let metadata = if dto.friendly {
+        Some(json!({ "friendly": true }))
+    } else {
+        None
+    };
+    let session_id = insert_session(&mut tx, game_type_id, Some(dto.host_id), metadata).await?;
 
     // Sitzplatz 0 beginnt, Sitzplatz 1 antwortet (siehe `SIDES`).
     for (seat, (side, user_id)) in SIDES
@@ -1027,7 +1080,7 @@ pub async fn surrender_session(
     let id = session_id(id)?;
     let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
     user.require_play()?;
-    require_open_session(&pool, id).await?;
+    let session = require_open_session(&pool, id).await?;
 
     // Aufgeben darf nur die Person selbst; Admins duerfen eine Aufgabe erzwingen.
     if !user.is_admin() && dto.user_id != user.id {
@@ -1036,18 +1089,17 @@ pub async fn surrender_session(
         ));
     }
 
+    let mut tx = pool.begin().await.map_err(internal)?;
+    let players = fetch_players_in(&mut tx, id).await?;
+
     // Der Aufgebende sitzt auf dem Platz, der verliert.
-    let loser = sqlx::query_scalar::<_, String>(
-        "SELECT side FROM game_session_players WHERE session_id = ? AND user_id = ?",
-    )
-    .bind(id)
-    .bind(dto.user_id)
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| ApiError::Internal(e.into()))?
-    .ok_or_else(|| {
-        ApiError::BadRequest("Diese Person sitzt in dieser Sitzung nicht am Brett.".into())
-    })?;
+    let loser = players
+        .iter()
+        .find(|player| player.user_id == Some(dto.user_id))
+        .and_then(|player| player.side.clone())
+        .ok_or_else(|| {
+            ApiError::BadRequest("Diese Person sitzt in dieser Sitzung nicht am Brett.".into())
+        })?;
 
     let winner = other_side(&loser)
         .ok_or_else(|| ApiError::Internal(anyhow::anyhow!("unknown side '{loser}'")))?;
@@ -1063,12 +1115,26 @@ pub async fn surrender_session(
                  '$.surrendered_by', ?)
          WHERE id = ? AND outcome IS NULL",
     )
-    .bind(&winner)
+    .bind(winner)
     .bind(dto.user_id)
     .bind(id)
-    .execute(&pool)
+    .execute(&mut *tx)
     .await
-    .map_err(|e| ApiError::Internal(e.into()))?;
+    .map_err(internal)?;
+
+    // Eine Aufgabe ist ein regulaeres Ergebnis: gewertete Partien zaehlen sie
+    // mit, Freundschaftsspiele nicht.
+    apply_rating(
+        &mut tx,
+        session.game_type_id,
+        &players,
+        "win",
+        Some(winner),
+        session.friendly != 0 || session.demo != 0,
+    )
+    .await?;
+
+    tx.commit().await.map_err(internal)?;
 
     Ok(Json(session_json_by_id(&pool, id).await?))
 }
@@ -1104,6 +1170,10 @@ pub struct GameResultDto {
     /// eine eigene Zeile an (Partie aus `/play` ohne Sitzung).
     #[serde(default)]
     pub session_id: Option<u64>,
+    /// Nur fuer Partien ohne Sitzung relevant: sie sind ohnehin ungewertet.
+    /// Bei einer gehosteten Sitzung entscheidet deren `friendly`-Kennzeichen.
+    #[serde(default)]
+    pub friendly: Option<bool>,
 }
 
 /// Speichert eine beendete Connect-Four-Partie.
@@ -1196,9 +1266,180 @@ pub async fn record_connect_four_game(
         .filter(|ms| *ms >= 0)
         .map(|ms| ms as u64);
 
+    let prepared: Vec<PreparedMove> = dto
+        .moves
+        .iter()
+        .map(|m| PreparedMove {
+            side: m.player.clone(),
+            payload: json!({ "col": m.location.x, "row": m.location.y }),
+        })
+        .collect();
+
+    let (session_id, ad_hoc) = persist_result(
+        &pool,
+        &user,
+        game_type_id,
+        CONNECT_FOUR,
+        &prepared,
+        outcome,
+        winner,
+        duration_ms,
+        dto.session_id,
+        dto.friendly,
+    )
+    .await?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({ "session_id": session_id, "outcome": outcome, "ad_hoc": ad_hoc })),
+    ))
+}
+
+/* ------------------------------------------------------------- Brettspiele */
+
+/// Ein Zug eines beliebigen Spiels, nach der Pruefung.
+///
+/// `side` landet zusaetzlich im JSON, damit die Leserouten die Person auch
+/// dann kennen, wenn keine `user_id` am Zug haengt (Ad-hoc-Partie).
+struct PreparedMove {
+    side: String,
+    payload: Value,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BoardMoveDto {
+    pub turn: i64,
+    pub player: String,
+    #[serde(default)]
+    pub location: Option<Location>,
+    #[serde(default)]
+    pub payload: Option<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BoardResultDto {
+    pub moves: Vec<BoardMoveDto>,
+    pub winner: String,
+    #[serde(default)]
+    pub duration_ms: Option<i64>,
+    #[serde(default)]
+    pub session_id: Option<u64>,
+    #[serde(default)]
+    pub friendly: Option<bool>,
+}
+
+/// Speichert eine beendete Partie eines beliebigen Spiels.
+///
+/// Die Route ist spielunabhaengig; die Regeln prueft `validate_board_moves`.
+/// Das Speichern selbst teilt sich `record_connect_four_game` mit dieser
+/// Funktion, damit Sitzung, Zuege und Metadaten ueberall gleich aussehen.
+pub async fn record_board_game(
+    State(pool): State<MySqlPool>,
+    user: CurrentUser,
+    path: Result<Path<String>, PathRejection>,
+    payload: Result<Json<BoardResultDto>, JsonRejection>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let Path(game_name) = path.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    user.require_play()?;
+
+    let game_type_id = game_type_id(&pool, &game_name).await?;
+    let (outcome, winner) = outcome_of(&dto.winner)?;
+
+    validate_board_moves(&game_name, &dto.moves, outcome, winner)?;
+
+    let prepared: Vec<PreparedMove> = dto
+        .moves
+        .iter()
+        .map(|m| PreparedMove {
+            side: m.player.clone(),
+            payload: move_payload(m),
+        })
+        .collect();
+
+    let duration_ms = dto
+        .duration_ms
+        .filter(|ms| *ms >= 0)
+        .map(|ms| ms as u64);
+
+    let (session_id, ad_hoc) = persist_result(
+        &pool,
+        &user,
+        game_type_id,
+        &game_name,
+        &prepared,
+        outcome,
+        winner,
+        duration_ms,
+        dto.session_id,
+        dto.friendly,
+    )
+    .await?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({ "session_id": session_id, "outcome": outcome, "ad_hoc": ad_hoc })),
+    ))
+}
+
+async fn game_type_id(pool: &MySqlPool, name: &str) -> Result<u32, ApiError> {
+    sqlx::query_scalar::<_, u32>("SELECT id FROM game_types WHERE name = ?")
+        .bind(name)
+        .fetch_optional(pool)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "unknown game type '{name}' - are the migrations applied?"
+            ))
+        })
+}
+
+/// `winner` aus dem Wire-Format in `(outcome, winner_side)` uebersetzen.
+fn outcome_of(winner: &str) -> Result<(&str, Option<&str>), ApiError> {
+    match winner {
+        "draw" => Ok(("draw", None)),
+        "aborted" => Ok(("aborted", None)),
+        side if SIDES.contains(&side) => Ok(("win", Some(side))),
+        other => Err(ApiError::BadRequest(format!(
+            "winner '{other}' is not a side, 'draw' or 'aborted'"
+        ))),
+    }
+}
+
+/// Spielspezifische Angaben plus optionale Rasterposition.
+fn move_payload(m: &BoardMoveDto) -> Value {
+    let mut payload = m
+        .payload
+        .clone()
+        .unwrap_or_else(|| json!({}));
+    if let Value::Object(ref mut map) = payload {
+        if let Some(location) = &m.location {
+            map.entry("col").or_insert_with(|| json!(location.x));
+            map.entry("row").or_insert_with(|| json!(location.y));
+        }
+    }
+    payload
+}
+
+/// Speichert Zuege und schliesst entweder die gehostete Sitzung oder legt
+/// eine Ad-hoc-Zeile an. Beide Wege laufen in einer Transaktion.
+#[allow(clippy::too_many_arguments)]
+async fn persist_result(
+    pool: &MySqlPool,
+    user: &CurrentUser,
+    game_type_id: u32,
+    game_name: &str,
+    moves: &[PreparedMove],
+    outcome: &str,
+    winner: Option<&str>,
+    duration_ms: Option<u64>,
+    session_id: Option<u64>,
+    friendly: Option<bool>,
+) -> Result<(u64, bool), ApiError> {
     let mut tx = pool.begin().await.map_err(internal)?;
 
-    let (session_id, ad_hoc, players) = match dto.session_id {
+    let (session_id, ad_hoc, players) = match session_id {
         // Gehostete Sitzung schliessen.
         Some(session_id) => {
             let session = sqlx::query_as::<_, Session>(&format!("{SESSION_COLUMNS} WHERE s.id = ?"))
@@ -1206,12 +1447,10 @@ pub async fn record_connect_four_game(
                 .fetch_optional(&mut *tx)
                 .await
                 .map_err(internal)?
-                .ok_or_else(|| {
-                    ApiError::NotFound(format!("no session with id {session_id}"))
-                })?;
-            if session.game_type != CONNECT_FOUR {
+                .ok_or_else(|| ApiError::NotFound(format!("no session with id {session_id}")))?;
+            if session.game_type != game_name {
                 return Err(ApiError::BadRequest(format!(
-                    "session {session_id} is not a connect-four session"
+                    "session {session_id} is not a {game_name} session"
                 )));
             }
             if session.outcome.is_some() {
@@ -1250,11 +1489,29 @@ pub async fn record_connect_four_game(
             .await
             .map_err(internal)?;
 
+            // Nur gewertete Partien veraendern die Wertung. Freundschaftsspiele
+            // und Beispieldaten bleiben bewusst aussen vor.
+            apply_rating(
+                &mut tx,
+                session.game_type_id,
+                &players,
+                outcome,
+                winner,
+                session.friendly != 0 || session.demo != 0,
+            )
+            .await?;
+
             (session_id, false, players)
         }
         // Partie ohne Sitzung: eigene Zeile, anonym.
         None => {
-            let mut metadata = json!({ "ad_hoc": true, "created_by": user.id });
+            let mut metadata = json!({
+                "ad_hoc": true,
+                "created_by": user.id,
+                // Ohne feste Plaetze gibt es keine Wertung; das Kennzeichen
+                // macht das auch in der Oberflaeche sichtbar.
+                "friendly": friendly.unwrap_or(true),
+            });
             if let Some(side) = winner {
                 metadata["winner_side"] = json!(side);
             }
@@ -1295,15 +1552,22 @@ pub async fn record_connect_four_game(
     };
 
     // Vorhandene Plaetze uebernehmen, damit `moves.player_id` gesetzt ist.
-    for m in &dto.moves {
+    for (index, m) in moves.iter().enumerate() {
+        let mut payload = m.payload.clone();
+        if let Value::Object(ref mut map) = payload {
+            map.insert("side".into(), json!(m.side));
+        } else {
+            payload = json!({ "side": m.side, "value": payload });
+        }
+
         sqlx::query(
             "INSERT INTO moves (session_id, move_index, player_id, move_source, payload)
              VALUES (?, ?, ?, 'manual', ?)",
         )
         .bind(session_id)
-        .bind(m.turn as u32)
-        .bind(player_id_of(&players, &m.player))
-        .bind(json!({ "col": m.location.x, "row": m.location.y, "side": m.player }))
+        .bind((index + 1) as u32)
+        .bind(player_id_of(&players, &m.side))
+        .bind(payload)
         .execute(&mut *tx)
         .await
         .map_err(internal)?;
@@ -1311,10 +1575,7 @@ pub async fn record_connect_four_game(
 
     tx.commit().await.map_err(internal)?;
 
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({ "session_id": session_id, "outcome": outcome, "ad_hoc": ad_hoc })),
-    ))
+    Ok((session_id, ad_hoc))
 }
 
 /// `metadata_json` fuer eine geschlossene Sitzung: bestehende Angaben behalten,
@@ -1345,6 +1606,162 @@ fn player_id_of(players: &[SessionPlayer], side: &str) -> Option<u64> {
         .and_then(|player| player.user_id)
 }
 
+/* ---------------------------------------------------------------- Wertung */
+
+/// Startwert fuer jede Person und jedes Spiel.
+const START_RATING: i32 = 1200;
+/// Elo-K-Faktor: 32 ist der uebliche Wert fuer Vereinsspieler:innen.
+const ELO_K: f64 = 32.0;
+/// Untergrenze, damit eine Pechsträhne die Wertung nicht ins Negative zieht.
+const MIN_RATING: i32 = 100;
+
+/// Erwarteter Punktwert (0..1) der Person mit `rating` gegen `opponent`.
+fn expected_score(rating: i32, opponent: i32) -> f64 {
+    1.0 / (1.0 + 10f64.powf((opponent - rating) as f64 / 400.0))
+}
+
+/// Elo-Aenderung fuer ein Ergebnis: `1.0` Sieg, `0.5` Remis, `0.0` Niederlage.
+fn elo_delta(rating: i32, opponent: i32, score: f64) -> i32 {
+    (ELO_K * (score - expected_score(rating, opponent))).round() as i32
+}
+
+/// Schreibt eine gewertete Partie in `player_ratings`.
+///
+/// Aufgerufen wird die Funktion nur, wenn beide Sitzplaetze einer gehosteten
+/// Sitzung mit Konten besetzt sind und die Sitzung weder freundschaftlich noch
+/// ein Beispieldatensatz ist. Sie laeuft in derselben Transaktion wie das
+/// Schliessen der Sitzung, damit Ergebnis und Wertung nie auseinanderfallen.
+async fn apply_rating(
+    tx: &mut Transaction<'_, MySql>,
+    game_type_id: u32,
+    players: &[SessionPlayer],
+    outcome: &str,
+    winner: Option<&str>,
+    friendly_or_demo: bool,
+) -> Result<(), ApiError> {
+    if friendly_or_demo || outcome == "aborted" || players.len() != 2 {
+        return Ok(());
+    }
+
+    let Some(red) = players
+        .iter()
+        .find(|player| player.side.as_deref() == Some("red"))
+    else {
+        return Ok(());
+    };
+    let Some(yellow) = players
+        .iter()
+        .find(|player| player.side.as_deref() == Some("yellow"))
+    else {
+        return Ok(());
+    };
+    let (Some(red_user), Some(yellow_user)) = (red.user_id, yellow.user_id) else {
+        return Ok(());
+    };
+    if red_user == yellow_user {
+        return Ok(());
+    }
+
+    let (red_score, yellow_score) = match outcome {
+        "draw" => (0.5, 0.5),
+        "win" if winner == Some("red") => (1.0, 0.0),
+        "win" if winner == Some("yellow") => (0.0, 1.0),
+        _ => return Ok(()),
+    };
+
+    let (red_rating, yellow_rating) =
+        lock_ratings(tx, game_type_id, red_user, yellow_user).await?;
+
+    let red_new = (red_rating + elo_delta(red_rating, yellow_rating, red_score)).max(MIN_RATING);
+    let yellow_new =
+        (yellow_rating + elo_delta(yellow_rating, red_rating, yellow_score)).max(MIN_RATING);
+
+    store_rating(tx, game_type_id, red_user, red_new, red_score).await?;
+    store_rating(tx, game_type_id, yellow_user, yellow_new, yellow_score).await?;
+    Ok(())
+}
+
+/// Legt fehlende Wertungszeilen an und liest beide Staende mit Sperre.
+///
+/// Die Sperre ist wichtig, wenn zwei Partien gleichzeitig enden: ohne
+/// `FOR UPDATE` wuerden beide denselben alten Wert lesen und eine Aenderung
+/// verlieren.
+async fn lock_ratings(
+    tx: &mut Transaction<'_, MySql>,
+    game_type_id: u32,
+    red_user: u64,
+    yellow_user: u64,
+) -> Result<(i32, i32), ApiError> {
+    for user_id in [red_user, yellow_user] {
+        sqlx::query(
+            "INSERT IGNORE INTO player_ratings (user_id, game_type_id, rating)
+             VALUES (?, ?, ?)",
+        )
+        .bind(user_id)
+        .bind(game_type_id)
+        .bind(START_RATING)
+        .execute(&mut **tx)
+        .await
+        .map_err(internal)?;
+    }
+
+    let red = sqlx::query_scalar::<_, i32>(
+        "SELECT rating FROM player_ratings
+         WHERE user_id = ? AND game_type_id = ? FOR UPDATE",
+    )
+    .bind(red_user)
+    .bind(game_type_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(internal)?;
+
+    let yellow = sqlx::query_scalar::<_, i32>(
+        "SELECT rating FROM player_ratings
+         WHERE user_id = ? AND game_type_id = ? FOR UPDATE",
+    )
+    .bind(yellow_user)
+    .bind(game_type_id)
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(internal)?;
+
+    Ok((red, yellow))
+}
+
+async fn store_rating(
+    tx: &mut Transaction<'_, MySql>,
+    game_type_id: u32,
+    user_id: u64,
+    rating: i32,
+    score: f64,
+) -> Result<(), ApiError> {
+    let win = if score == 1.0 { 1 } else { 0 };
+    let draw = if score == 0.5 { 1 } else { 0 };
+    let loss = if score == 0.0 { 1 } else { 0 };
+
+    sqlx::query(
+        "UPDATE player_ratings
+         SET rating = ?,
+             games_played = games_played + 1,
+             wins = wins + ?,
+             draws = draws + ?,
+             losses = losses + ?,
+             updated_at = UTC_TIMESTAMP()
+         WHERE user_id = ? AND game_type_id = ?",
+    )
+    .bind(rating)
+    .bind(win)
+    .bind(draw)
+    .bind(loss)
+    .bind(user_id)
+    .bind(game_type_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(internal)?;
+    Ok(())
+}
+
+
 async fn fetch_players_in(
     tx: &mut Transaction<'_, MySql>,
     session_id: u64,
@@ -1372,21 +1789,53 @@ pub async fn list_connect_four_games(
     State(pool): State<MySqlPool>,
     _user: CurrentUser,
 ) -> Result<Json<Value>, ApiError> {
-    let sql = format!(
-        "{SESSION_COLUMNS}
-         WHERE gt.name = ? AND s.outcome IS NOT NULL
-           AND EXISTS (SELECT 1 FROM moves m WHERE m.session_id = s.id)
-         ORDER BY s.started_at DESC"
-    );
-    let sessions = sqlx::query_as::<_, Session>(&sql)
-        .bind(CONNECT_FOUR)
-        .fetch_all(&pool)
-        .await
-        .map_err(internal)?;
+    recorded_games(&pool, Some(CONNECT_FOUR)).await
+}
+
+/// Alle beendeten Partien, spielunabhaengig - die Historie filtert nach
+/// `gameType`. Abgebrochene Sitzungen ohne Zuege bleiben aussen vor.
+pub async fn list_all_games(
+    State(pool): State<MySqlPool>,
+    _user: CurrentUser,
+) -> Result<Json<Value>, ApiError> {
+    recorded_games(&pool, None).await
+}
+
+async fn recorded_games(
+    pool: &MySqlPool,
+    game_name: Option<&str>,
+) -> Result<Json<Value>, ApiError> {
+    let sessions = match game_name {
+        Some(name) => {
+            let sql = format!(
+                "{SESSION_COLUMNS}
+                 WHERE gt.name = ? AND s.outcome IS NOT NULL
+                   AND EXISTS (SELECT 1 FROM moves m WHERE m.session_id = s.id)
+                 ORDER BY s.started_at DESC"
+            );
+            sqlx::query_as::<_, Session>(&sql)
+                .bind(name)
+                .fetch_all(pool)
+                .await
+                .map_err(internal)?
+        }
+        None => {
+            let sql = format!(
+                "{SESSION_COLUMNS}
+                 WHERE s.outcome IS NOT NULL
+                   AND EXISTS (SELECT 1 FROM moves m WHERE m.session_id = s.id)
+                 ORDER BY s.started_at DESC"
+            );
+            sqlx::query_as::<_, Session>(&sql)
+                .fetch_all(pool)
+                .await
+                .map_err(internal)?
+        }
+    };
 
     let ids: Vec<u64> = sessions.iter().map(|s| s.id).collect();
-    let players = fetch_players(&pool, &ids).await?;
-    let moves = fetch_moves(&pool, &ids).await?;
+    let players = fetch_players(pool, &ids).await?;
+    let moves = fetch_moves(pool, &ids).await?;
 
     Ok(Json(json!(sessions
         .iter()
@@ -1936,6 +2385,350 @@ fn validate_moves(
     Ok(())
 }
 
+/* ---------------------------------------------------- Brettspiele: Pruefung */
+
+fn payload_i64(m: &BoardMoveDto, key: &str) -> Option<i64> {
+    m.payload.as_ref()?.get(key)?.as_i64()
+}
+
+fn payload_str<'a>(m: &'a BoardMoveDto, key: &str) -> Option<&'a str> {
+    m.payload.as_ref()?.get(key)?.as_str()
+}
+
+fn payload_pair(m: &BoardMoveDto, key: &str) -> Option<(i64, i64)> {
+    let pair = m.payload.as_ref()?.get(key)?.as_array()?;
+    if pair.len() != 2 {
+        return None;
+    }
+    Some((pair[0].as_i64()?, pair[1].as_i64()?))
+}
+
+fn validate_board_moves(
+    game_name: &str,
+    moves: &[BoardMoveDto],
+    outcome: &str,
+    winner: Option<&str>,
+) -> Result<(), ApiError> {
+    if moves.is_empty() {
+        return bad("moves must not be empty".into());
+    }
+    if moves.len() > 4096 {
+        return bad("too many moves".into());
+    }
+
+    for (i, m) in moves.iter().enumerate() {
+        let expected = i as i64 + 1;
+        if m.turn != expected {
+            return bad(format!("moves[{i}].turn is {}, expected {expected}", m.turn));
+        }
+        if side_index(&m.player).is_none() {
+            return bad(format!("moves[{i}].player '{}' is not a side", m.player));
+        }
+        if let Some(location) = &m.location {
+            if location.x < 0 || location.y < 0 {
+                return bad(format!("moves[{i}].location is negative"));
+            }
+        }
+    }
+
+    match game_name {
+        "tictactoe" => validate_tictactoe(moves, outcome, winner),
+        "memory" => validate_memory(moves, outcome, winner),
+        "schach" => validate_coordinate_game(moves, 8, outcome, winner),
+        "mensch-aergere-dich-nicht" => validate_mensch(moves, outcome, winner),
+        other => bad(format!("no validator for game type '{other}'")),
+    }
+}
+
+fn validate_tictactoe(
+    moves: &[BoardMoveDto],
+    outcome: &str,
+    winner: Option<&str>,
+) -> Result<(), ApiError> {
+    let mut board = [None::<usize>; 9];
+    let mut winning_move: Option<usize> = None;
+
+    for (i, m) in moves.iter().enumerate() {
+        if winning_move.is_some() {
+            return bad(format!("moves[{i}] comes after the game was already won"));
+        }
+        let expected = if i % 2 == 0 { 0 } else { 1 };
+        if side_index(&m.player) != Some(expected) {
+            return bad(format!("moves[{i}]: '{}' is not the side to move", m.player));
+        }
+
+        let cell = payload_i64(m, "cell")
+            .or_else(|| m.location.as_ref().map(|l| l.y * 3 + l.x))
+            .ok_or_else(|| ApiError::BadRequest(format!("moves[{i}] has no cell")))?;
+        if !(0..9).contains(&cell) {
+            return bad(format!("moves[{i}].cell is outside the board"));
+        }
+        let cell = cell as usize;
+        if board[cell].is_some() {
+            return bad(format!("moves[{i}]: cell {cell} is already taken"));
+        }
+
+        board[cell] = Some(expected);
+        if tictactoe_line(&board, expected) {
+            winning_move = Some(i);
+        }
+    }
+
+    let last = moves.len() - 1;
+    match outcome {
+        "win" => {
+            if winning_move != Some(last) {
+                return bad("the last move does not complete three in a row".into());
+            }
+            if side_index(&moves[last].player).map(|side| SIDES[side]) != winner {
+                return bad("the winner must be the side that played the last move".into());
+            }
+        }
+        "draw" => {
+            if winning_move.is_some() {
+                return bad("a game with three in a row is not a draw".into());
+            }
+            if moves.len() != 9 {
+                return bad("a draw needs a full board".into());
+            }
+        }
+        _ => {
+            if winning_move.is_some() {
+                return bad("a game that was won cannot be aborted".into());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn tictactoe_line(board: &[Option<usize>; 9], side: usize) -> bool {
+    const LINES: [[usize; 3]; 8] = [
+        [0, 1, 2],
+        [3, 4, 5],
+        [6, 7, 8],
+        [0, 3, 6],
+        [1, 4, 7],
+        [2, 5, 8],
+        [0, 4, 8],
+        [2, 4, 6],
+    ];
+    LINES
+        .iter()
+        .any(|line| line.iter().all(|&cell| board[cell] == Some(side)))
+}
+
+/// Memory: jeder Flip ist ein Zug. Bei einem Paar bleibt dieselbe Person am
+/// Zug, deshalb wird hier nicht strikt abgewechselt. Der Verlauf enthaelt die
+/// Karte und ihr Symbol; damit laesst sich das Deck nachspielen.
+fn validate_memory(
+    moves: &[BoardMoveDto],
+    outcome: &str,
+    winner: Option<&str>,
+) -> Result<(), ApiError> {
+    let mut matched = [false; 16];
+    let mut card_symbol: [Option<String>; 16] = std::array::from_fn(|_| None);
+    // Eine Karte darf mehrfach aufgedeckt werden, solange sie noch nicht
+    // gefunden ist. Ein Symbol gehoert aber zu hoechstens zwei Karten.
+    let mut symbol_cards: HashMap<String, Vec<usize>> = HashMap::new();
+    let mut flipped: Vec<usize> = Vec::new();
+    let mut turn = 0usize;
+    let mut scores = [0usize; 2];
+
+    for (i, m) in moves.iter().enumerate() {
+        let side = side_index(&m.player)
+            .ok_or_else(|| ApiError::BadRequest(format!("moves[{i}] has no side")))?;
+        if side != turn {
+            return bad(format!("moves[{i}]: '{}' is not the side to move", m.player));
+        }
+
+        let card = payload_i64(m, "card")
+            .ok_or_else(|| ApiError::BadRequest(format!("moves[{i}] has no card")))?;
+        if !(0..16).contains(&card) {
+            return bad(format!("moves[{i}].card is outside the board"));
+        }
+        let card = card as usize;
+        if matched[card] {
+            return bad(format!("moves[{i}]: card {card} was already matched"));
+        }
+        if flipped.contains(&card) {
+            return bad(format!("moves[{i}]: card {card} was flipped twice in one turn"));
+        }
+
+        let symbol = payload_str(m, "symbol")
+            .ok_or_else(|| ApiError::BadRequest(format!("moves[{i}] has no symbol")))?;
+        if !matches!(symbol, "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H") {
+            return bad(format!("moves[{i}].symbol '{symbol}' is not A-H"));
+        }
+        match &card_symbol[card] {
+            Some(previous) if previous != symbol => {
+                return bad(format!("moves[{i}]: card {card} changed its symbol"));
+            }
+            None => card_symbol[card] = Some(symbol.to_string()),
+            _ => {}
+        }
+
+        let cards = symbol_cards.entry(symbol.to_string()).or_default();
+        if !cards.contains(&card) {
+            cards.push(card);
+            if cards.len() > 2 {
+                return bad(format!("symbol {symbol} belongs to more than two cards"));
+            }
+        }
+
+        flipped.push(card);
+        if flipped.len() == 2 {
+            let first = flipped[0];
+            let second = flipped[1];
+            let first_symbol = card_symbol[first].as_deref().unwrap_or("");
+            if first_symbol == symbol {
+                matched[first] = true;
+                matched[second] = true;
+                scores[side] += 1;
+            } else {
+                turn = 1 - turn;
+            }
+            flipped.clear();
+        }
+    }
+
+    match outcome {
+        "win" | "draw" => {
+            if flipped.len() != 0 {
+                return bad("a finished memory game cannot end after one card".into());
+            }
+            if matched.iter().any(|value| !value) {
+                return bad("a finished memory game needs all pairs".into());
+            }
+            for symbol in ["A", "B", "C", "D", "E", "F", "G", "H"] {
+                if symbol_cards.get(symbol).map_or(0, Vec::len) != 2 {
+                    return bad(format!("symbol {symbol} does not appear exactly twice"));
+                }
+            }
+            match outcome {
+                "win" => {
+                    let expected = winner
+                        .and_then(side_index)
+                        .ok_or_else(|| ApiError::BadRequest("the winner is missing".into()))?;
+                    let actual = if scores[0] == scores[1] {
+                        None
+                    } else if scores[0] > scores[1] {
+                        Some(0)
+                    } else {
+                        Some(1)
+                    };
+                    if actual != Some(expected) {
+                        return bad("the winner does not have the most pairs".into());
+                    }
+                }
+                _ => {
+                    if scores[0] != scores[1] {
+                        return bad("a memory draw needs equal scores".into());
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+/// Schach: abwechselnd, von/nach im Brett. Die vollen Regeln
+/// (Rochade, Matt) prueft das Frontend; hier zaehlt, dass der
+/// gespeicherte Verlauf in sich stimmig ist.
+fn validate_coordinate_game(
+    moves: &[BoardMoveDto],
+    size: i64,
+    outcome: &str,
+    winner: Option<&str>,
+) -> Result<(), ApiError> {
+    for (i, m) in moves.iter().enumerate() {
+        let expected = if i % 2 == 0 { "red" } else { "yellow" };
+        if m.player != expected {
+            return bad(format!("moves[{i}]: '{}' is not the side to move", m.player));
+        }
+        let from = payload_pair(m, "from")
+            .ok_or_else(|| ApiError::BadRequest(format!("moves[{i}] has no from")))?;
+        let to = payload_pair(m, "to")
+            .ok_or_else(|| ApiError::BadRequest(format!("moves[{i}] has no to")))?;
+
+        for (label, (row, col)) in [("from", from), ("to", to)] {
+            if row < 0 || row >= size || col < 0 || col >= size {
+                return bad(format!(
+                    "moves[{i}].{label} is outside the {size}x{size} board"
+                ));
+            }
+        }
+        if from == to {
+            return bad(format!("moves[{i}]: from and to are the same square"));
+        }
+    }
+
+    if outcome == "win" {
+        if winner.is_none() {
+            return bad("the winner is missing".into());
+        }
+        if moves.last().map(|m| m.player.as_str()) != winner {
+            return bad("the winner must be the side that played the last move".into());
+        }
+    }
+
+    Ok(())
+}
+
+/// Mensch aergere dich nicht: keine strikte Abwechslung, weil eine Sechs einen
+/// weiteren Zug erlaubt. Geprueft werden Wuerfel, Figur und ein stimmiges Ende.
+fn validate_mensch(
+    moves: &[BoardMoveDto],
+    outcome: &str,
+    winner: Option<&str>,
+) -> Result<(), ApiError> {
+    let mut home = [0usize; 2];
+
+    for (i, m) in moves.iter().enumerate() {
+        let side = side_index(&m.player)
+            .ok_or_else(|| ApiError::BadRequest(format!("moves[{i}] has no side")))?;
+
+        let dice = payload_i64(m, "dice")
+            .ok_or_else(|| ApiError::BadRequest(format!("moves[{i}] has no dice")))?;
+        if !(1..=6).contains(&dice) {
+            return bad(format!("moves[{i}].dice is not between 1 and 6"));
+        }
+
+        let token = payload_i64(m, "token")
+            .ok_or_else(|| ApiError::BadRequest(format!("moves[{i}] has no token")))?;
+        if !(0..4).contains(&token) {
+            return bad(format!("moves[{i}].token is not between 0 and 3"));
+        }
+
+        if payload_str(m, "to") == Some("home") {
+            home[side] += 1;
+            if home[side] > 4 {
+                return bad(format!("moves[{i}]: more than four tokens are home"));
+            }
+        }
+    }
+
+    match outcome {
+        "win" => {
+            let expected = winner
+                .and_then(side_index)
+                .ok_or_else(|| ApiError::BadRequest("the winner is missing".into()))?;
+            if home[expected] != 4 {
+                return bad("the winner must have all four tokens home".into());
+            }
+            if moves.last().map(|m| m.player.as_str()) != winner {
+                return bad("the winner must be the side that played the last move".into());
+            }
+        }
+        "draw" => return bad("Mensch aergere dich nicht has no draw".into()),
+        _ => {}
+    }
+
+    Ok(())
+}
+
 const PASSWORD_ITERATIONS: u32 = 100_000;
 
 fn hash_password(password: &str) -> String {
@@ -2073,6 +2866,27 @@ mod tests {
     }
 
     #[test]
+    fn equal_ratings_gain_and_lose_the_same_amount() {
+        assert_eq!(elo_delta(1200, 1200, 1.0), 16);
+        assert_eq!(elo_delta(1200, 1200, 0.5), 0);
+        assert_eq!(elo_delta(1200, 1200, 0.0), -16);
+    }
+
+    #[test]
+    fn the_underdog_gains_more_than_the_favourite() {
+        assert!(elo_delta(1000, 1400, 1.0) > elo_delta(1400, 1000, 1.0));
+        assert!(elo_delta(1000, 1400, 0.0) > elo_delta(1400, 1000, 0.0));
+    }
+
+    #[test]
+    fn expected_scores_are_complementary() {
+        let favourite = expected_score(1600, 1200);
+        let underdog = expected_score(1200, 1600);
+        assert!((favourite + underdog - 1.0).abs() < 1e-9);
+        assert!(favourite > 0.9);
+    }
+
+    #[test]
     fn finished_metadata_keeps_the_pauses_and_replaces_the_winner() {
         let current = json!({ "paused_ms": 4200, "paused_at": "2026-10-07T06:11:42Z" });
         let updated = finished_metadata(Some(&current), Some("yellow"));
@@ -2124,5 +2938,120 @@ mod tests {
             ApiError::NotFound(message) => assert!(message.contains("s-whsax5")),
             other => panic!("erwartet NotFound, bekam {other:?}"),
         }
+    }
+
+    fn board_mv(turn: i64, player: &str, payload: Value) -> BoardMoveDto {
+        BoardMoveDto {
+            turn,
+            player: player.into(),
+            location: None,
+            payload: Some(payload),
+        }
+    }
+
+    fn tictactoe_red_win() -> Vec<BoardMoveDto> {
+        vec![
+            board_mv(1, "red", json!({ "cell": 0 })),
+            board_mv(2, "yellow", json!({ "cell": 3 })),
+            board_mv(3, "red", json!({ "cell": 1 })),
+            board_mv(4, "yellow", json!({ "cell": 4 })),
+            board_mv(5, "red", json!({ "cell": 2 })),
+        ]
+    }
+
+    #[test]
+    fn accepts_a_tictactoe_win() {
+        assert!(
+            validate_board_moves("tictactoe", &tictactoe_red_win(), "win", Some("red")).is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_a_tictactoe_win_without_a_line() {
+        let moves = vec![
+            board_mv(1, "red", json!({ "cell": 0 })),
+            board_mv(2, "yellow", json!({ "cell": 3 })),
+        ];
+        assert!(
+            validate_board_moves("tictactoe", &moves, "win", Some("red")).is_err()
+        );
+    }
+
+    #[test]
+    fn rejects_moves_after_a_tictactoe_win() {
+        let mut moves = tictactoe_red_win();
+        moves.push(board_mv(6, "yellow", json!({ "cell": 8 })));
+        assert!(
+            validate_board_moves("tictactoe", &moves, "win", Some("red")).is_err()
+        );
+    }
+
+    #[test]
+    fn memory_allows_a_card_to_be_flipped_again_later() {
+        let moves = vec![
+            board_mv(1, "red", json!({ "card": 0, "symbol": "A" })),
+            board_mv(2, "red", json!({ "card": 1, "symbol": "B" })),
+            board_mv(3, "yellow", json!({ "card": 0, "symbol": "A" })),
+            board_mv(4, "yellow", json!({ "card": 2, "symbol": "A" })),
+        ];
+        assert!(validate_board_moves("memory", &moves, "aborted", None).is_ok());
+    }
+
+    #[test]
+    fn memory_rejects_the_same_card_twice_in_one_turn() {
+        let moves = vec![
+            board_mv(1, "red", json!({ "card": 0, "symbol": "A" })),
+            board_mv(2, "red", json!({ "card": 0, "symbol": "A" })),
+        ];
+        assert!(validate_board_moves("memory", &moves, "aborted", None).is_err());
+    }
+
+    #[test]
+    fn accepts_coordinate_moves_for_chess() {
+        let chess = vec![
+            board_mv(1, "red", json!({ "from": [6, 4], "to": [4, 4] })),
+            board_mv(2, "yellow", json!({ "from": [1, 4], "to": [3, 4] })),
+        ];
+        assert!(validate_board_moves("schach", &chess, "aborted", None).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_coordinate_move_outside_the_board() {
+        let moves = vec![board_mv(1, "red", json!({ "from": [0, 0], "to": [8, 0] }))];
+        assert!(validate_board_moves("schach", &moves, "aborted", None).is_err());
+    }
+
+    #[test]
+    fn accepts_a_mensch_win_with_all_tokens_home() {
+        let moves: Vec<BoardMoveDto> = (0..4)
+            .map(|token| {
+                board_mv(
+                    token + 1,
+                    "red",
+                    json!({ "dice": 1, "token": token, "to": "home" }),
+                )
+            })
+            .collect();
+        assert!(
+            validate_board_moves(
+                "mensch-aergere-dich-nicht",
+                &moves,
+                "win",
+                Some("red")
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn rejects_a_mensch_draw() {
+        let moves = vec![board_mv(
+            1,
+            "red",
+            json!({ "dice": 6, "token": 0, "to": "bank" }),
+        )];
+        assert!(
+            validate_board_moves("mensch-aergere-dich-nicht", &moves, "draw", None).is_err()
+        );
     }
 }

@@ -35,6 +35,22 @@ pub struct AdminUser {
     pub created_at: String,
 }
 
+/// Wertungsstand einer Person fuer ein Spiel.
+///
+/// Die Zeile entsteht erst beim ersten gewerteten Ergebnis; die Leseroute
+/// liefert fuer alle anderen Kombinationen den Startwert 1200.
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PlayerRating {
+    pub user_id: u64,
+    pub username: String,
+    pub game_type: String,
+    pub rating: i32,
+    pub games_played: u32,
+    pub wins: u32,
+    pub losses: u32,
+    pub draws: u32,
+}
+
 /// Zeile aus `users` fuer die Anmeldung, inklusive Passwort-Hash und Sperre.
 #[derive(Debug, sqlx::FromRow)]
 pub struct AuthUser {
@@ -65,6 +81,8 @@ pub struct GameType {
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Session {
     pub id: u64,
+    /// Technische Kennung des Spieltyps; die Wertung liegt je Spiel.
+    pub game_type_id: u32,
     pub game_type: String,
     pub host_id: Option<u64>,
     /// `win`, `draw` oder `aborted`; `None`, solange die Sitzung laeuft.
@@ -85,6 +103,8 @@ pub struct Session {
     pub demo: i64,
     /// 1 = ohne gehostete Sitzung gespielt (`/play` ohne Sitzung).
     pub ad_hoc: i64,
+    /// 1 = Freundschaftsspiel (`metadata_json.friendly`), aendert keine Wertung.
+    pub friendly: i64,
     /// Rohes `metadata_json`, unveraendert. Die API gibt die Einzelfelder
     /// stattdessen flach aus (`session_json`); die Schreibrouten brauchen
     /// aber den Originalwert, um den sie nicht zerstoerte Angaben zu ergaenzen.

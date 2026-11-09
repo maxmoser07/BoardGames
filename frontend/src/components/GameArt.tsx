@@ -6,7 +6,7 @@ import type { GameType } from "../types";
 /**
  * Symbol eines Spiels im Katalog. Bewusst schematisch statt fotorealistisch:
  * die Kacheln sollen auf einen Blick unterscheidbar sein, ohne dass hier
- * Bildmaterial für sechs Spiele gepflegt werden muss.
+ * Bildmaterial für fünf Spiele gepflegt werden muss.
  */
 
 type MarkProps = SVGProps<SVGSVGElement>;
@@ -67,25 +67,12 @@ function AngryOrangeMark(props: MarkProps) {
   );
 }
 
-function HalmaMark(props: MarkProps) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" {...props}>
-      <path d="M12 3l4 5-4 4-4-4z" strokeWidth="1.6" strokeLinejoin="round" />
-      <circle cx="6" cy="17" r="2.4" strokeWidth="1.6" />
-      <circle cx="12" cy="17" r="2.4" strokeWidth="1.6" />
-      <circle cx="18" cy="17" r="2.4" strokeWidth="1.6" />
-      <path d="M8.4 17h1.2M14.4 17h1.2" strokeWidth="1.4" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 const MARKS: Record<string, (props: MarkProps) => React.JSX.Element> = {
   "connect-four": ConnectFourMark,
   tictactoe: TicTacToeMark,
   memory: MemoryMark,
   schach: ChessMark,
   "mensch-aergere-dich-nicht": AngryOrangeMark,
-  halma: HalmaMark,
 };
 
 /** Kachel-Symbol eines Spiels; unbekannte Spiele bekommen ein Raster. */

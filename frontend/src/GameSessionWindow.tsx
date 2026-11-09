@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Ban, Flag, LayoutGrid, Pause, Play, RotateCcw, Trophy } from "lucide-react";
+import { Ban, Flag, Handshake, LayoutGrid, Pause, Play, RotateCcw, Trophy } from "lucide-react";
 
 import ConnectFourGame from "./ConnectFourGame";
+import { GameBoard } from "./games/GameBoard";
 import { GamePreview } from "./components/GamePreview";
 import { Logo } from "./components/Logo";
 import { Avatar, Badge, Notice, Spinner } from "./components/ui";
@@ -11,9 +12,10 @@ import { usePausedTime } from "./hooks/usePausedTime";
 import { ApiError, api } from "./lib/api";
 import { useAuth } from "./lib/auth";
 import { formatDateTime, formatDuration } from "./lib/format";
+import { findGameType } from "./lib/gameTypes";
 import { installGameResultEndpoint } from "./lib/gameResultEndpoint";
 import { canManageSession, canOpenSession, canSurrenderSeat } from "./lib/permissions";
-import { useNavigate } from "./router";
+import { useNavigate, windowPath } from "./router";
 import {
   SIDE_LABEL,
   opponent,
@@ -44,7 +46,7 @@ function nameOf(users: Map<number, User>, id: number): string {
 }
 
 /**
- * Spielfeld-Fenster, geöffnet als Pop-up unter `/connectfour/:id`.
+ * Spielfeld-Fenster, geöffnet als Pop-up unter `/:spiel/:id`.
  *
  * Die Komponente wird vom Router mit `key={sessionId}` eingebunden, damit ein
  * Wechsel zu einer anderen Sitzung (Neue Partie) den Brettzustand neu aufbaut.
@@ -64,18 +66,26 @@ export const GameSessionWindow: React.FC<Props> = ({ sessionId }) => {
         <div className="window__brand">
           <Logo size={24} />
           <div>
-            <p className="window__title">Vier Gewinnt</p>
+            <p className="window__title">{findGameType(loaded?.gameType ?? "")?.displayName ?? "Spielfeld"}</p>
             <p className="window__subtitle">
               Sitzung <code>{sessionId}</code>
             </p>
           </div>
         </div>
         {loaded ? (
-          <Badge tone={STATUS_TONE[sessionStatus(loaded)]}>
-            {sessionStatus(loaded) === "running" ? <span className="pulse" aria-hidden="true" /> : null}
-            {sessionStatus(loaded) === "paused" ? <Pause aria-hidden="true" size={12} /> : null}
-            {statusLabel(sessionStatus(loaded))}
-          </Badge>
+          <div className="window__badges">
+            {loaded.friendly ? (
+              <span className="chip chip--friendly">
+                <Handshake aria-hidden="true" size={12} />
+                Freundschaftsspiel
+              </span>
+            ) : null}
+            <Badge tone={STATUS_TONE[sessionStatus(loaded)]}>
+              {sessionStatus(loaded) === "running" ? <span className="pulse" aria-hidden="true" /> : null}
+              {sessionStatus(loaded) === "paused" ? <Pause aria-hidden="true" size={12} /> : null}
+              {statusLabel(sessionStatus(loaded))}
+            </Badge>
+          </div>
         ) : null}
       </header>
 
@@ -135,9 +145,10 @@ interface SessionBodyProps {
 }
 
 /**
- * Brett plus Sitzungsverwaltung. Solange die Sitzung läuft, steuert
- * `ConnectFourGame` (und damit der eingefrorene `useConnectFour`) das Spiel;
- * sobald die Sitzung einen Ausgang hat, zeigt das Fenster das Endergebnis.
+ * Brett plus Sitzungsverwaltung. Solange die Sitzung läuft, steuert das Brett
+ * des jeweiligen Spiels die Partie (Vier Gewinnt weiter über `ConnectFourGame`
+ * und den eingefrorenen `useConnectFour`); sobald die Sitzung einen Ausgang
+ * hat, zeigt das Fenster das Endergebnis.
  */
 function SessionBody({ session, users, role, userId }: SessionBodyProps) {
   const games = useLiveData(() => api.listGames());
@@ -170,8 +181,9 @@ function SessionBody({ session, users, role, userId }: SessionBodyProps) {
         players: { ...session.players },
         startedAt: Date.parse(session.createdAt),
         pausedMs: pausedTotal,
+        friendly: session.friendly ?? false,
       }),
-    [session.id, session.createdAt, session.players, pausedTotal],
+    [session.id, session.createdAt, session.players, session.friendly, pausedTotal],
   );
 
   async function run(action: () => Promise<unknown>, failure: string): Promise<void> {
@@ -214,8 +226,10 @@ function SessionBody({ session, users, role, userId }: SessionBodyProps) {
         gameType: session.gameType,
         hostId: session.hostId,
         players: { ...session.players },
+        friendly: session.friendly ?? false,
       });
-      navigate(`/connectfour/${next.id}`);
+      const path = windowPath(session.gameType, next.id);
+      if (path) navigate(path);
     }, "Neue Sitzung konnte nicht angelegt werden.");
   };
 
@@ -240,6 +254,12 @@ function SessionBody({ session, users, role, userId }: SessionBodyProps) {
           );
         })}
       </section>
+
+      {session.friendly ? (
+        <Notice tone="info" title="Freundschaftsspiel">
+          Diese Partie wird gespeichert, ändert aber keine Wertung.
+        </Notice>
+      ) : null}
 
       {feedback ? <Notice tone="danger">{feedback}</Notice> : null}
 
@@ -268,7 +288,23 @@ function SessionBody({ session, users, role, userId }: SessionBodyProps) {
               die Deckschicht macht den Zustand sichtbar. */}
           <div className="board" data-paused={paused}>
             <div className="board__panel" inert={paused || undefined}>
-              <ConnectFourGame key={session.id} />
+              {session.gameType === "connect-four" ? (
+                <ConnectFourGame key={session.id} />
+              ) : (
+                <GameBoard
+                  key={session.id}
+                  gameType={session.gameType}
+                  context={{
+                    gameType: session.gameType,
+                    sessionId: session.id,
+                    players: session.players,
+                    startedAt: Date.parse(session.createdAt),
+                    pausedMs: pausedTotal,
+                    paused,
+                    friendly: session.friendly ?? false,
+                  }}
+                />
+              )}
             </div>
             {paused ? (
               <div className="board__veil" aria-hidden="true">
@@ -351,11 +387,12 @@ function ResultPanel({ session, game, users, elapsed, busy, canRematch, onRematc
       <p className="result__headline">
         <Trophy aria-hidden="true" size={18} />
         {outcomeLabel(session.outcome ?? "draw")}
+        {session.friendly ? <span className="chip chip--friendly">Freundschaftsspiel</span> : null}
       </p>
 
       <div className="result__body">
         {game ? (
-          <GamePreview moves={game.moves} size="md" />
+          <GamePreview gameType={session.gameType} moves={game.moves} size="md" />
         ) : (
           <p className="result__note">
             {session.abortReason === "surrender" && session.surrenderedBy !== null
