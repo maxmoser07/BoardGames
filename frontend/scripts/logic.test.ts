@@ -13,7 +13,27 @@ import {
   oddsHeadline,
 } from "../src/lib/connectFourOdds.ts";
 import { GAME_TYPES, bySortOrder, findGameType } from "../src/lib/gameTypes.ts";
+import {
+  DEFAULT_RATING,
+  formatRating,
+  rankRatings,
+  ratingTier,
+  winRate,
+} from "../src/lib/ratings.ts";
+import {
+  barWidth,
+  countTotal,
+  emptyStatusCounts,
+  monthLabel,
+  recentMonths,
+  statusSegments,
+} from "../src/lib/reportVisuals.ts";
 import { parseRoute, setupPath, windowPath } from "../src/router.ts";
+import {
+  canViewCamera,
+  canViewLeaderboard,
+  canViewReports,
+} from "../src/lib/permissions.ts";
 import {
   isPlayable,
   isRunning,
@@ -25,6 +45,7 @@ import {
   winnerToOutcome,
   type ConnectFourMove,
   type GameSession,
+  type PlayerRating,
   type Side,
 } from "../src/types.ts";
 
@@ -76,6 +97,8 @@ describe("Router", () => {
     assert.deepEqual(parseRoute(""), { name: "catalog" });
     assert.deepEqual(parseRoute("/sessions"), { name: "sessions" });
     assert.deepEqual(parseRoute("/sessions/"), { name: "sessions" });
+    assert.deepEqual(parseRoute("/reports"), { name: "reports" });
+    assert.deepEqual(parseRoute("/ratings"), { name: "ratings" });
     assert.deepEqual(parseRoute("/play"), { name: "play" });
     assert.deepEqual(parseRoute("/camera"), { name: "camera" });
   });
@@ -374,5 +397,119 @@ describe("Gewinnchancen", () => {
       oddsHeadline(estimateWinningOdds(buildGrid(redThreat), "red"), { red: "Grün" }),
       "Grün klar im Vorteil",
     );
+  });
+});
+
+describe("Rollenmatrix", () => {
+  it("beschraenkt Meldungen auf die Administration", () => {
+    assert.equal(canViewReports(undefined), false);
+    assert.equal(canViewReports("player"), false);
+    assert.equal(canViewReports("host"), false);
+    assert.equal(canViewReports("admin"), true);
+  });
+
+  it("gibt die volle Rangliste nur Hosts und Admins", () => {
+    assert.equal(canViewLeaderboard(undefined), false);
+    assert.equal(canViewLeaderboard("player"), false);
+    assert.equal(canViewLeaderboard("host"), true);
+    assert.equal(canViewLeaderboard("admin"), true);
+  });
+
+  it("beschraenkt Kamera und Brettverfolgung auf Hosts und Admins", () => {
+    assert.equal(canViewCamera(undefined), false);
+    assert.equal(canViewCamera("player"), false);
+    assert.equal(canViewCamera("host"), true);
+    assert.equal(canViewCamera("admin"), true);
+  });
+});
+
+describe("Spieler-Ratings", () => {
+  const row = (overrides: Partial<PlayerRating>): PlayerRating => ({
+    userId: 1,
+    username: "Alice",
+    role: "player",
+    rating: 1000,
+    gamesPlayed: 0,
+    wins: 0,
+    losses: 0,
+    draws: 0,
+    updatedAt: new Date(0).toISOString(),
+    ...overrides,
+  });
+
+  it("sortiert nach Rating, dann nach Partien und Name", () => {
+    const sorted = rankRatings([
+      row({ userId: 1, username: "Bob", rating: 1200, gamesPlayed: 4 }),
+      row({ userId: 2, username: "Alice", rating: 1200, gamesPlayed: 8 }),
+      row({ userId: 3, username: "Cara", rating: 1400, gamesPlayed: 1 }),
+    ]);
+    assert.deepEqual(sorted.map((entry) => entry.username), ["Cara", "Alice", "Bob"]);
+  });
+
+  it("ordnet Ratings in Stufen ein", () => {
+    assert.equal(ratingTier(1000), "bronze");
+    assert.equal(ratingTier(1200), "silver");
+    assert.equal(ratingTier(1400), "gold");
+    assert.equal(ratingTier(1600), "platinum");
+  });
+
+  it("berechnet die Siegquote ohne Division durch null", () => {
+    assert.equal(winRate(row({ wins: 0, gamesPlayed: 0 })), 0);
+    assert.equal(winRate(row({ wins: 3, gamesPlayed: 4 })), 75);
+    assert.equal(formatRating(1234), "1.234");
+    assert.equal(DEFAULT_RATING, 1000);
+  });
+});
+
+describe("Meldungs-Visualisierung", () => {
+  it("zaehlt alle Status und ignoriert fehlende Werte", () => {
+    assert.equal(countTotal(emptyStatusCounts()), 0);
+    assert.equal(countTotal({ open: 2, resolved: 1 }), 3);
+  });
+
+  it("verteilt die Statussegmente auf 100 Prozent", () => {
+    const segments = statusSegments({ open: 2, reviewed: 1, resolved: 1, dismissed: 0 });
+    assert.deepEqual(
+      segments.map((segment) => segment.count),
+      [2, 1, 1, 0],
+    );
+    assert.equal(
+      segments.reduce((sum, segment) => sum + segment.percent, 0),
+      100,
+    );
+    assert.equal(segments[0].label, "Offen");
+  });
+
+  it("meldet bei leerer Liste keine Division durch null", () => {
+    assert.deepEqual(
+      statusSegments(emptyStatusCounts()).map((segment) => segment.percent),
+      [0, 0, 0, 0],
+    );
+  });
+
+  it("begrenzt Balkenbreiten und formatiert Monate", () => {
+    assert.equal(barWidth(0, 10), 0);
+    assert.equal(barWidth(10, 10), 100);
+    assert.equal(barWidth(1, 10), 10);
+    assert.equal(barWidth(1, 1000), 6);
+    assert.equal(monthLabel("2026-11"), "11/26");
+    assert.equal(monthLabel("kaputt"), "kaputt");
+  });
+
+  it("zeigt nur die letzten Monate in alter Reihenfolge", () => {
+    const months = [
+      { month: "2026-06", count: 1 },
+      { month: "2026-07", count: 2 },
+      { month: "2026-08", count: 3 },
+      { month: "2026-09", count: 4 },
+      { month: "2026-10", count: 5 },
+      { month: "2026-11", count: 6 },
+      { month: "2026-12", count: 7 },
+    ];
+    assert.deepEqual(recentMonths(months, 3).map((entry) => entry.month), [
+      "2026-10",
+      "2026-11",
+      "2026-12",
+    ]);
   });
 });

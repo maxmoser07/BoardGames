@@ -104,13 +104,26 @@ Write-Host "  Spieltypen: $($games.name -join ', ')"
 Write-Host "`n== Ohne Token und falsche Rolle =="
 Expect (Send GET "/users" -token "") "users ohne Token" 401
 Expect (Send GET "/sessions" -token "") "sessions ohne Token" 401
+Expect (Send GET "/ratings" -token "") "ratings ohne Token" 401
+Expect (Send GET "/reports/visualisation" -token "") "Meldungs-Visualisierung ohne Token" 401
 Expect (Send POST "/sessions" '{"game_type":"connect-four","host_id":1,"players":{"red":2,"yellow":3}}' -token "") "Sitzung ohne Token" 401
 Expect (Send GET "/users" -token $aliceToken) "users als Player" 200
+$playerRatings = @(Ok (Send GET "/ratings" -token $aliceToken) "Player liest eigenes Rating")
+if ($playerRatings.Count -ne 1) { throw "Player sieht $($playerRatings.Count) Ratings statt nur dem eigenen" }
+if ($playerRatings[0].user_id -ne 2) { throw "Player sieht ein fremdes Rating" }
+Write-Host "  Player-Rating: $($playerRatings[0].username) ($($playerRatings[0].rating))"
+Ok (Send GET "/ratings/2" -token $aliceToken) "Player liest eigenes Rating" | Out-Null
+Expect (Send GET "/ratings/3" -token $aliceToken) "Player liest fremdes Rating" 403
+Expect (Send GET "/reports/visualisation" -token $aliceToken) "Player liest Meldungs-Visualisierung" 403
 Expect (Send GET "/reports" -token $aliceToken) "Player liest Meldungen" 403
+Expect (Send POST "/admin/ratings/2/reset" '{"rating":1200}' -token $aliceToken) "Player setzt Rating zurueck" 403
 Expect (Send GET "/admin/users" -token $aliceToken) "Player liest Benutzerverwaltung" 403
 Expect (Send DELETE "/demo-data" -token $aliceToken) "Player loescht Demo" 403
 Expect (Send POST "/sessions" '{"game_type":"connect-four","host_id":2,"players":{"red":2,"yellow":3}}' -token $aliceToken) "Player legt Sitzung an" 403
 Expect (Send GET "/reports" -token $hostToken) "Host liest Meldungen" 403
+Expect (Send GET "/reports/visualisation" -token $hostToken) "Host liest Meldungs-Visualisierung" 403
+$hostRatings = @(Ok (Send GET "/ratings" -token $hostToken) "Host liest Rangliste")
+if ($hostRatings.Count -le 1) { throw "Host sieht keine vollstaendige Rangliste" }
 Expect (Send GET "/admin/users" -token $hostToken) "Host liest Benutzerverwaltung" 403
 Expect (Send DELETE "/demo-data" -token $hostToken) "Host loescht Demo" 403
 
@@ -223,8 +236,28 @@ Write-Host "`n== Administration =="
 $script:token = $adminToken
 $adminUsers = Ok (Send GET "/admin/users") "/admin/users"
 Write-Host "  Benutzer: $($adminUsers.username -join ', ')"
+
+Write-Host "`n== Ratings lesen und zuruecksetzen =="
+$allRatings = Ok (Send GET "/ratings") "/ratings"
+Write-Host "  Ratings: $(($allRatings | Measure-Object).Count) Eintraege, Top: $($allRatings[0].username) ($($allRatings[0].rating))"
+$before = Ok (Send GET "/ratings/2") "/ratings/2"
+Write-Host "  Alice vor Reset: rating=$($before.rating), partien=$($before.games_played)"
+Ok (Send GET "/ratings/3") "/ratings/3" | Out-Null
+Expect (Send GET "/ratings/999999") "unbekanntes Rating" 404
+Expect (Send POST "/admin/ratings/2/reset" '{"rating":50}') "Rating ausserhalb der Grenzen" 400
+Expect (Send POST "/admin/ratings/999999/reset" '{"rating":1000}') "Reset fuer unbekannte Person" 404
+$reset = Ok (Send POST "/admin/ratings/2/reset" '{"rating":1234,"reason":"Smoke-Test","reset_stats":false}') "Rating-Reset"
+Write-Host "  Alice nach Reset: rating=$($reset.rating), partien=$($reset.games_played)"
+if ($reset.rating -ne 1234) { throw "Rating-Reset lieferte $($reset.rating) statt 1234" }
+if ($reset.games_played -ne $before.games_played) { throw "reset_stats=false hat die Statistik veraendert" }
+$restored = Ok (Send POST "/admin/ratings/2/reset" (@{ rating = $before.rating; reason = "Smoke-Test rueckgaengig"; reset_stats = $false } | ConvertTo-Json -Compress)) "Rating wiederherstellen"
+Write-Host "  Alice wiederhergestellt: rating=$($restored.rating), partien=$($restored.games_played)"
+if ($restored.rating -ne $before.rating) { throw "Rating wurde nicht wiederhergestellt" }
+
 $reports = Ok (Send GET "/reports") "/reports"
 Write-Host "  Meldungen: $(($reports | Measure-Object).Count)"
+$adminOverview = Ok (Send GET "/reports/visualisation") "Admin liest Meldungs-Visualisierung"
+Write-Host "  Visualisierung: scope=$($adminOverview.scope), gesamt=$($adminOverview.total)"
 Expect (Send PATCH "/admin/users/4" '{"role":"player"}') "Admin degradiert sich selbst" 400
 
 Write-Host "`n== Listen =="

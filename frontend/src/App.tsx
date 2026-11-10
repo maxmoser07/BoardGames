@@ -6,20 +6,22 @@ import { Notice } from "./components/ui";
 import Catalog from "./Catalog";
 import GameSetup from "./GameSetup";
 import PlayView from "./PlayView";
+import RatingsView from "./RatingsView";
 import ReportsView from "./ReportsView";
 import SessionsView from "./SessionsView";
 import { useAuth } from "./lib/auth";
-import { canManageReports, canViewSessions } from "./lib/permissions";
+import { canViewCamera, canViewReports, canViewSessions } from "./lib/permissions";
 import { useNavigate, useRoute } from "./router";
 
 /**
  * Wurzel der App: verteilt die Ansichten. Bewusst ohne Router-Bibliothek,
  * die Pfade sind in `router.ts` festgelegt.
  *
- * Vor jeder Ansicht steht die Rollenpruefung: `player` kommt nur an Katalog,
- * Spielansicht, eigenes Profil und `/play`; `host` zusaetzlich an die
- * Sitzungsverwaltung; `admin` zusaetzlich an Meldungen. Die API prueft
- * dieselben Regeln noch einmal.
+ * Vor jeder Ansicht steht die Rollenpruefung: `player` kommt an Katalog,
+ * Spielansicht, eigenes Profil, `/play` und das eigene Rating; `host`
+ * zusaetzlich an Sitzungsverwaltung, Kamera und Rangliste; `admin` zusaetzlich
+ * an Meldungen und Benutzerverwaltung. Die API prueft dieselben Regeln noch
+ * einmal.
  */
 export const App: React.FC = () => {
   const route = useRoute();
@@ -45,15 +47,21 @@ export const App: React.FC = () => {
         <NoAccess message="Die Sitzungsverwaltung ist Hosts und Admins vorbehalten." />
       );
     case "reports":
-      return canManageReports(user.role) ? (
+      return canViewReports(user.role) ? (
         <ReportsView />
       ) : (
-        <NoAccess message="Meldungen und Benutzerverwaltung sind nur für Admins." />
+        <NoAccess message="Meldungen sind der Administration vorbehalten." />
       );
+    case "ratings":
+      return <RatingsView />;
     case "play":
       return <PlayView key={route.gameName ?? "auswahl"} gameName={route.gameName} />;
     case "camera":
-      return <CameraView />;
+      return canViewCamera(user.role) ? (
+        <CameraView />
+      ) : (
+        <NoAccess message="Die Kamera-/Brettverfolgung ist Hosts und Admins vorbehalten." />
+      );
     case "game":
       // `key` sorgt dafür, dass beim Wechsel auf eine andere Sitzung das Brett
       // neu aufgebaut wird (Zustand liegt in useConnectFour bzw. im jeweiligen Spiel).
@@ -73,7 +81,8 @@ export const App: React.FC = () => {
             >
               Erlaubt sind <code>/</code>, <code>/games/&lt;name&gt;</code>, <code>/play</code>,{" "}
               <code>/play/&lt;name&gt;</code>, <code>/camera</code>, <code>/sessions</code>,{" "}
-              <code>/reports</code>, <code>/profile</code> und <code>/&lt;spiel&gt;/&lt;id&gt;</code>.
+              <code>/reports</code>, <code>/ratings</code>, <code>/profile</code> und{" "}
+              <code>/&lt;spiel&gt;/&lt;id&gt;</code>.
             </Notice>
           </main>
         </div>

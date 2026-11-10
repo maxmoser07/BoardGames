@@ -35,22 +35,6 @@ pub struct AdminUser {
     pub created_at: String,
 }
 
-/// Wertungsstand einer Person fuer ein Spiel.
-///
-/// Die Zeile entsteht erst beim ersten gewerteten Ergebnis; die Leseroute
-/// liefert fuer alle anderen Kombinationen den Startwert 1200.
-#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
-pub struct PlayerRating {
-    pub user_id: u64,
-    pub username: String,
-    pub game_type: String,
-    pub rating: i32,
-    pub games_played: u32,
-    pub wins: u32,
-    pub losses: u32,
-    pub draws: u32,
-}
-
 /// Zeile aus `users` fuer die Anmeldung, inklusive Passwort-Hash und Sperre.
 #[derive(Debug, sqlx::FromRow)]
 pub struct AuthUser {
@@ -120,6 +104,21 @@ pub struct SessionPlayer {
     /// NULL = anonymer Platz (Partie ohne Sitzung).
     pub user_id: Option<u64>,
     pub side: Option<String>,
+}
+
+/// Zeile aus `player_ratings`, ergaenzt um Name und Rolle aus `users`.
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct PlayerRating {
+    pub user_id: u64,
+    pub username: String,
+    pub role: String,
+    pub rating: i32,
+    pub games_played: u32,
+    pub wins: u32,
+    pub losses: u32,
+    pub draws: u32,
+    /// `2026-11-09T12:00:00Z`.
+    pub updated_at: String,
 }
 
 /// Zeile aus `player_reports`.
