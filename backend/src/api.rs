@@ -346,7 +346,6 @@ pub fn router() -> Router<MySqlPool> {
         .route("/api/admin/users/{id}", patch(update_admin_user))
         .route("/api/admin/users/{id}", put(update_admin_user))
         .route("/api/games", get(list_game_types))
-        .route("/api/ratings", get(list_ratings))
         .route("/api/sessions", get(list_sessions))
         .route("/api/sessions", post(create_session))
         .route("/api/sessions/{id}", get(read_session))

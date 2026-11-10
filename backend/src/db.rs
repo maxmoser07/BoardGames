@@ -113,10 +113,11 @@ pub struct PlayerRating {
     pub username: String,
     pub role: String,
     pub rating: i32,
-    pub games_played: u32,
-    pub wins: u32,
-    pub losses: u32,
-    pub draws: u32,
+    // `COALESCE(r.games_played, 0)` liefert in MySQL den Typ BIGINT, daher i64.
+    pub games_played: i64,
+    pub wins: i64,
+    pub losses: i64,
+    pub draws: i64,
     /// `2026-11-09T12:00:00Z`.
     pub updated_at: String,
 }

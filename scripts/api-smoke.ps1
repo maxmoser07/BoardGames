@@ -51,7 +51,9 @@ function Ok($response, $path) {
   if ($response.Status -ne 200 -and $response.Status -ne 201) {
     throw "$path lieferte $($response.Status): $($response.Json)"
   }
-  return $response.Json | ConvertFrom-Json
+  # PowerShell 5.1 gibt ein JSON-Array sonst als ein einzelnes Objekt aus.
+  $parsed = $response.Json | ConvertFrom-Json
+  foreach ($item in $parsed) { Write-Output $item }
 }
 
 # SIEHE: 200 oder ein erwarteter Fehlercode.
@@ -198,7 +200,7 @@ Ok (Send POST "/sessions/$($fremd.id)/abort") "Fremde Sitzung aufraeumen" | Out-
 
 Write-Host "`n== Freundschaftsspiel und Wertung =="
 function RatingOf($ratings, [int]$userId) {
-  $row = $ratings | Where-Object { $_.user_id -eq $userId -and $_.game_type -eq "connect-four" }
+  $row = $ratings | Where-Object { $_.user_id -eq $userId }
   if ($null -eq $row) { throw "Keine Wertungszeile fuer Benutzer $userId" }
   return [int]$row.rating
 }
