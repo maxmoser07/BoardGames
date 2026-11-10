@@ -119,6 +119,7 @@ const CameraView: React.FC = () => {
     stop,
     reset,
     calibrate,
+    snapCalibration,
   } = useCameraMoveTracker({
     calibration: INITIAL_CORNERS,
     intervalMs: 500,
@@ -140,6 +141,7 @@ const CameraView: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
+  const [snapNotice, setSnapNotice] = useState<string | null>(null);
 
   const winner = useMemo(() => winnerOf(board), [board]);
   const counts = useMemo(() => {
@@ -195,14 +197,41 @@ const CameraView: React.FC = () => {
 
   const applyCalibration = useCallback(() => {
     if (corners === null) return;
-    calibrate(flipCorners(corners, flipX, flipY));
+
+    // Die von Hand gesetzten Ecken am Lochmuster ausrichten. Das korrigiert
+    // typische Verschiebungen von ein paar Pixeln, ohne dass der Benutzer
+    // pixelgenau ziehen muss.
+    const snapped = snapCalibration(corners);
+    const aligned = snapped ?? corners;
+    if (snapped !== null) setCorners(snapped);
+    setSnapNotice(
+      snapped === null
+        ? "Raster konnte nicht automatisch ausgerichtet werden. Prüfe die Ecken von Hand."
+        : "Raster automatisch am Lochmuster ausgerichtet.",
+    );
+
+    calibrate(flipCorners(aligned, flipX, flipY));
     reset();
     setCalibrated(true);
     setEditing(false);
     setStartedAt(Date.now());
     setSavedId(null);
     setSaveError(null);
-  }, [calibrate, corners, flipX, flipY, reset]);
+  }, [calibrate, corners, flipX, flipY, reset, snapCalibration]);
+
+  /** Raster auch während der Partie neu am Brett ausrichten. */
+  const handleSnapCalibration = useCallback(() => {
+    if (corners === null) return;
+    const snapped = snapCalibration(corners);
+    if (snapped === null) {
+      setSnapNotice("Raster konnte nicht automatisch ausgerichtet werden.");
+      return;
+    }
+
+    setCorners(snapped);
+    calibrate(flipCorners(snapped, flipX, flipY));
+    setSnapNotice("Raster am Lochmuster ausgerichtet.");
+  }, [calibrate, corners, flipX, flipY, snapCalibration]);
 
   const beginEditing = useCallback(() => {
     reset();
@@ -211,11 +240,13 @@ const CameraView: React.FC = () => {
     setStartedAt(null);
     setSavedId(null);
     setSaveError(null);
+    setSnapNotice(null);
   }, [reset]);
 
   const handleStart = useCallback(async () => {
     setSavedId(null);
     setSaveError(null);
+    setSnapNotice(null);
     await start();
   }, [start]);
 
@@ -227,6 +258,7 @@ const CameraView: React.FC = () => {
     setStartedAt(null);
     setSavedId(null);
     setSaveError(null);
+    setSnapNotice(null);
   }, [reset, stop]);
 
   const handleResetCorners = useCallback(() => {
@@ -591,6 +623,16 @@ const CameraView: React.FC = () => {
                 <button
                   type="button"
                   className="btn btn--ghost btn--sm"
+                  onClick={handleSnapCalibration}
+                  disabled={corners === null}
+                >
+                  <Crosshair aria-hidden="true" size={15} />
+                  Raster einrasten
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn--ghost btn--sm"
                   onClick={handleResetCorners}
                   disabled={videoSize === null}
                 >
@@ -600,6 +642,8 @@ const CameraView: React.FC = () => {
               </>
             ) : null}
           </div>
+
+          {snapNotice !== null ? <p className="camera-hint">{snapNotice}</p> : null}
 
           {editing && status === "running" ? (
             <>
@@ -624,8 +668,10 @@ const CameraView: React.FC = () => {
               </div>
               <p className="camera-hint">
                 Ziehe die vier Punkte auf die äußeren Ecken des Rasters, nicht auf den Rahmen
-                des Bretts. Die Vorschau ist bewusst nicht gespiegelt, damit die Erkennung
-                dieselben Pixel wie das Kamerabild nutzt.
+                des Bretts. Beim Übernehmen richtet die App das Raster zusätzlich automatisch
+                am Lochmuster aus – ein paar Pixel Ungenauigkeit sind also kein Problem. Die
+                Vorschau ist bewusst nicht gespiegelt, damit die Erkennung dieselben Pixel wie
+                das Kamerabild nutzt.
               </p>
             </>
           ) : null}

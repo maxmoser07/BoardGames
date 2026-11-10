@@ -34,6 +34,8 @@ export interface UseCameraMoveTrackerResult {
   stop: () => void;
   reset: () => void;
   calibrate: (corners: BoardCorners) => void;
+  /** Ecken am erkannten Lochraster ausrichten; `null`, wenn das Bild nicht reicht. */
+  snapCalibration: (corners: BoardCorners) => BoardCorners | null;
 }
 
 export function useCameraMoveTracker(
@@ -110,6 +112,10 @@ export function useCameraMoveTracker(
     trackerRef.current?.calibrate(corners);
   }, []);
 
+  const snapCalibration = useCallback((corners: BoardCorners): BoardCorners | null => {
+    return trackerRef.current?.snapCalibration(corners) ?? null;
+  }, []);
+
   useEffect(
     () => () => {
       trackerRef.current?.dispose();
@@ -118,5 +124,17 @@ export function useCameraMoveTracker(
     [],
   );
 
-  return { videoRef, status, error, board, moves, observation, start, stop, reset, calibrate };
+  return {
+    videoRef,
+    status,
+    error,
+    board,
+    moves,
+    observation,
+    start,
+    stop,
+    reset,
+    calibrate,
+    snapCalibration,
+  };
 }

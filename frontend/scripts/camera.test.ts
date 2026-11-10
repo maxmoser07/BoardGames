@@ -18,6 +18,7 @@ import {
 } from "../src/lib/camera/geometry.ts";
 import { MoveTracker } from "../src/lib/camera/moveTracker.ts";
 import { averageColor, CanvasPixelSource } from "../src/lib/camera/pixelSource.ts";
+import { refineBoardCorners } from "../src/lib/camera/refine.ts";
 import type {
   BoardObservation,
   BoardState,
@@ -70,6 +71,85 @@ function observation(
 
 function cloneBoard(board: BoardState): BoardState {
   return board.map((line) => [...line]);
+}
+
+/**
+ * Synthetisches Kamerabild eines roten Vier-Gewinnt-Bretts mit weißen Stegen
+ * und runden Löchern. `rect` beschreibt die äußeren Zellgrenzen des Rasters.
+ */
+function renderBoardImage(
+  board: BoardState,
+  rect: { x: number; y: number; width: number; height: number },
+  width = 720,
+  height = 620,
+): PixelSource {
+  const rows = board.length;
+  const cols = rows === 0 ? 0 : board[0].length;
+  const data = new Uint8ClampedArray(width * height * 4);
+
+  const background: Rgb = { r: 24, g: 26, b: 34 };
+  const plastic: Rgb = { r: 190, g: 48, b: 44 };
+  const ridge: Rgb = { r: 236, g: 236, b: 232 };
+  const empty: Rgb = { r: 222, g: 222, b: 218 };
+
+  const paint = (x: number, y: number, color: Rgb): void => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
+    const index = (y * width + x) * 4;
+    data[index] = color.r;
+    data[index + 1] = color.g;
+    data[index + 2] = color.b;
+    data[index + 3] = 255;
+  };
+
+  const fillRect = (x: number, y: number, w: number, h: number, color: Rgb): void => {
+    const fromX = Math.max(0, Math.floor(x));
+    const fromY = Math.max(0, Math.floor(y));
+    const toX = Math.min(width, Math.ceil(x + w));
+    const toY = Math.min(height, Math.ceil(y + h));
+    for (let py = fromY; py < toY; py += 1) {
+      for (let px = fromX; px < toX; px += 1) paint(px, py, color);
+    }
+  };
+
+  const fillCircle = (cx: number, cy: number, radius: number, color: Rgb): void => {
+    const fromX = Math.max(0, Math.floor(cx - radius));
+    const toX = Math.min(width - 1, Math.ceil(cx + radius));
+    const fromY = Math.max(0, Math.floor(cy - radius));
+    const toY = Math.min(height - 1, Math.ceil(cy + radius));
+    for (let py = fromY; py <= toY; py += 1) {
+      for (let px = fromX; px <= toX; px += 1) {
+        const dx = px - cx;
+        const dy = py - cy;
+        if (dx * dx + dy * dy <= radius * radius) paint(px, py, color);
+      }
+    }
+  };
+
+  fillRect(0, 0, width, height, background);
+  fillRect(rect.x, rect.y, rect.width, rect.height, plastic);
+
+  const cellWidth = rect.width / cols;
+  const cellHeight = rect.height / rows;
+  const line = Math.max(2, Math.min(cellWidth, cellHeight) * 0.05);
+
+  for (let col = 0; col <= cols; col += 1) {
+    fillRect(rect.x + col * cellWidth - line / 2, rect.y, line, rect.height, ridge);
+  }
+  for (let row = 0; row <= rows; row += 1) {
+    fillRect(rect.x, rect.y + row * cellHeight - line / 2, rect.width, line, ridge);
+  }
+
+  const holeRadius = Math.min(cellWidth, cellHeight) * 0.34;
+  for (let row = 0; row < rows; row += 1) {
+    for (let col = 0; col < cols; col += 1) {
+      const cx = rect.x + (col + 0.5) * cellWidth;
+      const cy = rect.y + (row + 0.5) * cellHeight;
+      const side = board[row][col];
+      fillCircle(cx, cy, holeRadius, side === null ? empty : colorOf(side));
+    }
+  }
+
+  return new CanvasPixelSource({ width, height, data } as ImageData);
 }
 
 function moveEvents(events: ReturnType<MoveTracker["feed"]>) {
@@ -166,6 +246,16 @@ describe("Farbklassifikation", () => {
     const blue = classifyColor({ r: 20, g: 20, b: 220 });
     assert.equal(blue.side, null);
     assert.equal(blue.confidence, 0);
+  });
+
+  it("erkennt dunkle gelbe und grüne Steine", () => {
+    const darkGreen = classifyColor({ r: 50, g: 100, b: 60 });
+    assert.equal(darkGreen.side, "red");
+    assert.ok(darkGreen.confidence > 0.5);
+
+    const darkYellow = classifyColor({ r: 150, g: 130, b: 40 });
+    assert.equal(darkYellow.side, "yellow");
+    assert.ok(darkYellow.confidence > 0.5);
   });
 
   it("rechnet Hue und Abstände auf dem Farbkreis", () => {
@@ -439,5 +529,97 @@ describe("Pixelquelle", () => {
     } as ImageData;
     const source = new CanvasPixelSource(image);
     assert.deepEqual(source.averageColor(0, 0, 0), { r: 10, g: 20, b: 30 });
+  });
+});
+
+describe("Automatische Brett-Ausrichtung", () => {
+  const rect = { x: 60, y: 60, width: 600, height: 500 };
+  const trueCorners = cornersFromRect(rect);
+  /** Ecken so versetzt, wie sie beim Ziehen auf den Lochrand entstehen. */
+  const insetCorners = cornersFromRect({
+    x: rect.x + 15,
+    y: rect.y + 15,
+    width: rect.width - 30,
+    height: rect.height - 30,
+  });
+
+  function cornerDistances(
+    actual: {
+      topLeft: { x: number; y: number };
+      topRight: { x: number; y: number };
+      bottomRight: { x: number; y: number };
+      bottomLeft: { x: number; y: number };
+    },
+  ): number[] {
+    const expected = [
+      trueCorners.topLeft,
+      trueCorners.topRight,
+      trueCorners.bottomRight,
+      trueCorners.bottomLeft,
+    ];
+    const found = [actual.topLeft, actual.topRight, actual.bottomRight, actual.bottomLeft];
+    return expected.map((point, index) =>
+      Math.hypot(found[index].x - point.x, found[index].y - point.y),
+    );
+  }
+
+  it("findet die Zellgrenzen trotz zu klein gesetzter Ecken", () => {
+    const board = emptyBoard();
+    board[0][0] = "yellow";
+    board[3][2] = "red";
+    board[5][0] = "red";
+    board[5][6] = "yellow";
+    const source = renderBoardImage(board, rect);
+
+    const refined = refineBoardCorners(source, insetCorners);
+    assert.ok(refined !== null);
+
+    const distances = cornerDistances(refined);
+    for (const distance of distances) {
+      assert.ok(distance < 6, `Ecke liegt ${distance.toFixed(1)} px daneben`);
+    }
+  });
+
+  it("erkennt mit den ausgerichteten Ecken alle Steine", () => {
+    const board = emptyBoard();
+    board[0][0] = "red";
+    board[3][3] = "yellow";
+    board[4][6] = "red";
+    board[5][0] = "red";
+    board[5][6] = "yellow";
+    const source = renderBoardImage(board, rect);
+
+    const refined = refineBoardCorners(source, insetCorners);
+    assert.ok(refined !== null);
+
+    const detector = new ConnectFourDetector({ corners: refined });
+    const result = detector.detect(source, 1);
+
+    for (let row = 0; row < 6; row += 1) {
+      for (let col = 0; col < 7; col += 1) {
+        assert.equal(result.cells[row][col].side, board[row][col], `Zelle ${row}/${col}`);
+      }
+    }
+  });
+
+  it("verändert eine bereits passende Kalibrierung kaum", () => {
+    const source = renderBoardImage(emptyBoard(), rect);
+
+    const refined = refineBoardCorners(source, trueCorners);
+    assert.ok(refined !== null);
+
+    for (const distance of cornerDistances(refined)) {
+      assert.ok(distance < 4, `Ecke liegt ${distance.toFixed(1)} px daneben`);
+    }
+  });
+
+  it("gibt bei einem unbrauchbaren Bild null zurück", () => {
+    const blank: PixelSource = {
+      width: 320,
+      height: 240,
+      averageColor: () => ({ r: 120, g: 120, b: 120 }),
+    };
+    const corners = cornersFromRect({ x: 0, y: 0, width: 320, height: 240 });
+    assert.equal(refineBoardCorners(blank, corners), null);
   });
 });

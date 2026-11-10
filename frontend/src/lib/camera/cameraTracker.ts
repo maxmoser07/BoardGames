@@ -13,6 +13,7 @@
 import { CameraCapture } from "./camera.ts";
 import { ConnectFourDetector } from "./detector.ts";
 import { MoveTracker } from "./moveTracker.ts";
+import { refineBoardCorners } from "./refine.ts";
 import type {
   BoardCorners,
   CameraMoveTrackerOptions,
@@ -65,6 +66,20 @@ export class CameraMoveTracker {
   /** Neue Ecken, z. B. nachdem das Brett anders ausgerichtet wurde. */
   calibrate(corners: BoardCorners): void {
     this.detector = this.createDetector(corners);
+  }
+
+  /**
+   * Richtet die übergebenen Ecken an den tatsächlichen Löchern des aktuellen
+   * Kamerabilds aus.
+   *
+   * Liefert die korrigierten Ecken zurück oder `null`, wenn das Bild keine
+   * sichere Ausrichtung zulässt. Der Tracker übernimmt die neuen Ecken nicht
+   * selbst – so kann die Oberfläche das Overlay gleich mitverschieben.
+   */
+  snapCalibration(corners: BoardCorners): BoardCorners | null {
+    const frame = this.capture.capture();
+    if (frame === null) return null;
+    return refineBoardCorners(frame.source, corners, this.options.layout);
   }
 
   async start(video?: HTMLVideoElement): Promise<void> {

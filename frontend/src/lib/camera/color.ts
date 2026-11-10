@@ -96,9 +96,20 @@ export function classifyColor(
     return hueScore * saturationScore * valueScore;
   };
 
+  // Gelb und Grün liegen weit genug vom roten Brettkunststoff entfernt, dass
+  // sie auch bei dunkleren Steinen (Schatten, schwaches Licht) erkannt werden
+  // dürfen. Rot bleibt streng bewertet – sonst würde der Brettrahmen als
+  // roter Stein zählen.
+  const distinctChroma = clamp01((hsv.s - thresholds.minSaturation) / 0.2);
+  const distinctValue = clamp01((hsv.v - 0.12) / 0.2);
+  const distinctScore = (hue: number): number => {
+    const hueScore = clamp01(1 - circularHueDistance(hsv.h, hue) / thresholds.maxHueDistance);
+    return hueScore * distinctChroma * distinctValue;
+  };
+
   const redScore = sideScore(thresholds.redHue);
-  const yellowScore = sideScore(thresholds.yellowHue);
-  const greenScore = sideScore(thresholds.greenHue);
+  const yellowScore = distinctScore(thresholds.yellowHue);
+  const greenScore = distinctScore(thresholds.greenHue);
 
   let bestSide: Side = redScore >= yellowScore ? "red" : "yellow";
   let bestSideScore = Math.max(redScore, yellowScore);

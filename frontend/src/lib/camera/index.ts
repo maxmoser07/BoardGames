@@ -41,6 +41,8 @@ export {
 export type { Homography } from "./geometry.ts";
 export { MoveTracker } from "./moveTracker.ts";
 export { averageColor, CanvasPixelSource } from "./pixelSource.ts";
+export { refineBoardCorners } from "./refine.ts";
+export type { RefineOptions } from "./refine.ts";
 export type {
   BoardCorners,
   BoardDetector,
