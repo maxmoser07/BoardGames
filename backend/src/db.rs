@@ -122,6 +122,29 @@ pub struct PlayerRating {
     pub updated_at: String,
 }
 
+/// Freund:in einer Person aus `users`.
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct Friend {
+    pub id: u64,
+    pub username: String,
+    pub role: String,
+    /// `2026-11-10T12:00:00Z`; Zeitpunkt der Annahme.
+    pub since: String,
+}
+
+/// Offene oder abgelehnte Anfrage samt der beteiligten Person.
+#[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
+pub struct FriendRequestRow {
+    pub id: u64,
+    /// Bei eingehenden Anfragen die Person, die gefragt hat; bei ausgehenden
+    /// die Person, die gefragt wurde.
+    pub user_id: u64,
+    pub username: String,
+    pub role: String,
+    pub message: Option<String>,
+    pub created_at: String,
+}
+
 /// Zeile aus `player_reports`.
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct PlayerReport {

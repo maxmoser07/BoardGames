@@ -39,6 +39,9 @@
 import {
   type BoardGameResult,
   type ConnectFourResult,
+  type FriendOverview,
+  type FriendRequest,
+  type FriendUser,
   type GameOutcome,
   type GameSession,
   type GameType,
@@ -77,6 +80,12 @@ export interface RecordGameContext {
 export interface Api {
   getUsers(): Promise<User[]>;
   getUser(id: number): Promise<User>;
+  getFriends(): Promise<FriendOverview>;
+  sendFriendRequest(userId: number, message?: string | null): Promise<FriendRequest>;
+  acceptFriendRequest(id: number): Promise<FriendRequest>;
+  declineFriendRequest(id: number): Promise<FriendRequest>;
+  cancelFriendRequest(id: number): Promise<void>;
+  removeFriend(userId: number): Promise<void>;
   login(username: string, password: string): Promise<User>;
   register(input: { username: string; password: string; email?: string | null }): Promise<User>;
   logout(): Promise<void>;
@@ -140,6 +149,27 @@ function toUser(wire: WireUser): User {
     email: wire.email,
     createdAt: wire.created_at,
   };
+}
+
+interface WireFriend {
+  id: number;
+  username: string;
+  role: UserRole;
+  friends_since: string;
+}
+
+interface WireFriendRequest {
+  id: number;
+  direction: "incoming" | "outgoing";
+  message: string | null;
+  created_at: string;
+  user: WireUser;
+}
+
+interface WireFriendOverview {
+  friends: WireFriend[];
+  incoming: WireFriendRequest[];
+  outgoing: WireFriendRequest[];
 }
 
 interface WireGameType {
@@ -367,6 +397,71 @@ async function getUsers(): Promise<User[]> {
 
 async function getUser(id: number): Promise<User> {
   return toUser(await request<WireUser>(`/users/${id}`));
+}
+
+function toFriend(wire: WireFriend): FriendUser {
+  return {
+    id: wire.id,
+    username: wire.username,
+    role: wire.role,
+    friendsSince: wire.friends_since,
+  };
+}
+
+function toFriendRequest(wire: WireFriendRequest): FriendRequest {
+  return {
+    id: wire.id,
+    direction: wire.direction,
+    message: wire.message,
+    createdAt: wire.created_at,
+    user: toUser(wire.user),
+  };
+}
+
+async function getFriends(): Promise<FriendOverview> {
+  const wire = await request<WireFriendOverview>("/friends");
+  return {
+    friends: wire.friends.map(toFriend),
+    incoming: wire.incoming.map(toFriendRequest),
+    outgoing: wire.outgoing.map(toFriendRequest),
+  };
+}
+
+async function sendFriendRequest(userId: number, message?: string | null): Promise<FriendRequest> {
+  const wire = await request<WireFriendRequest>("/friends/requests", {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId, message: message ?? null }),
+  });
+  notify();
+  return toFriendRequest(wire);
+}
+
+async function acceptFriendRequest(id: number): Promise<FriendRequest> {
+  const wire = await request<WireFriendRequest>(
+    `/friends/requests/${encodeURIComponent(String(id))}/accept`,
+    { method: "POST" },
+  );
+  notify();
+  return toFriendRequest(wire);
+}
+
+async function declineFriendRequest(id: number): Promise<FriendRequest> {
+  const wire = await request<WireFriendRequest>(
+    `/friends/requests/${encodeURIComponent(String(id))}/decline`,
+    { method: "POST" },
+  );
+  notify();
+  return toFriendRequest(wire);
+}
+
+async function cancelFriendRequest(id: number): Promise<void> {
+  await request(`/friends/requests/${encodeURIComponent(String(id))}`, { method: "DELETE" });
+  notify();
+}
+
+async function removeFriend(userId: number): Promise<void> {
+  await request(`/friends/${encodeURIComponent(String(userId))}`, { method: "DELETE" });
+  notify();
 }
 
 async function login(username: string, password: string): Promise<User> {
@@ -709,6 +804,12 @@ notify = () => {
 export const httpApi: Api = {
   getUsers,
   getUser,
+  getFriends,
+  sendFriendRequest,
+  acceptFriendRequest,
+  declineFriendRequest,
+  cancelFriendRequest,
+  removeFriend,
   login,
   register,
   logout,

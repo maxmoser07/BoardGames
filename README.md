@@ -5,7 +5,8 @@ Spielverläufe sammeln und Spieler-Ratings pflegen. Spielbar sind Vier Gewinnt,
 Tic Tac Toe, Memory, Schach und Mensch ärgere dich nicht; das Datenmodell ist
 spielunabhängig. Während der Partie zeigt das Brett laufend geschätzte
 Gewinnchancen und einen Zugtipp; die Bewertung läuft vollständig im Browser.
-Dazu kommen eine Webcam-Erkennung für ein physisches Brett und eine
+Dazu kommen eine Webcam-Erkennung für ein physisches Brett samt Live-Feedback
+zur Erkennungsqualität und Zuganalyse, Freundschaftsanfragen im Profil und eine
 rollenabhängige Oberfläche: Spieler:innen sehen ihr eigenes Rating, Hosts
 zusätzlich Sitzungen, Kamera und Rangliste, Admins zusätzlich Meldungen,
 Ratings und Benutzerverwaltung.
@@ -314,7 +315,7 @@ npm run dev        # http://localhost:5173
 npm run build      # tsc -b && vite build -> frontend/dist/
 npm run preview    # Produktionsbuild lokal ausliefern
 npm run lint       # eslint (inkl. React-Compiler-Regeln)
-npm test           # Router, Ableitungen und Ergebnis-Prüfung (Node, ohne Browser)
+npm test           # Router, Spiellogik, Ableitungen, Kamera-Feedback und Ergebnis-Prüfung (Node)
 ```
 
 Voraussetzung ist ein laufendes Backend: Sitzungen, Verläufe und Personen liegen
@@ -350,7 +351,8 @@ frontend/src/
   SessionsView.tsx         Sitzungen und Verläufe unter /sessions (host/admin)
   RatingsView.tsx          eigenes Rating bzw. Rangliste, Admin-Reset pro Person
   ReportsView.tsx          Meldungs-Visualisierung und Verwaltung (admin)
-  ProfileView.tsx          eigenes Profil unter /profile inkl. Rating
+  ProfileView.tsx          eigenes Profil unter /profile inkl. Rating und Freundschaften
+  CameraView.tsx           Kamera-/Brettverfolgung mit Live-Feedback unter /camera
   GameSessionWindow.tsx    Spielfeld-Fenster unter /:spiel/:id
   PlayView.tsx             Partie ohne Sitzung unter /play bzw. /play/:name
   router.ts                Pfadauflösung ohne Router-Bibliothek
@@ -362,6 +364,7 @@ frontend/src/
   index.css                Gestaltung der Oberfläche (Variablen + Komponenten)
   components/              Bausteine: Karten, Kacheln, Auswahl, Anzeigen, Rahmen
     WinOdds.tsx            Balken, Legende und Zugtipp zu den Gewinnchancen
+    CameraAnalysis.tsx     Live-Feedback, Drohungen und Zugqualität der Kamera
     ReportVisualisation.tsx Statusbalken, Gründe, Monatsverlauf und Top-Meldungen
   games/                   Tic Tac Toe, Memory, Schach, Mensch
     GameBoard.tsx          wählt das Brett zum Spielnamen
@@ -377,12 +380,14 @@ frontend/src/
     reportVisuals.ts       Aufbereitung der Status-, Grund- und Monatsdaten
     gameResultEndpoint.ts  ergänzt Sitzungs-Id und Spielzeit beim POST des Hooks
     connectFour.ts         Validierung eines abgeschlossenen Spielverlaufs
-    connectFourOdds.ts     Monte-Carlo-Bewertung einer Stellung
+    connectFourOdds.ts     Monte-Carlo-Bewertung einer Stellung und Zugchancen
+    cameraAnalysis.ts      Erkennungsfeedback, Drohungen und Zugnoten der Kamera
     gameMoves.ts           beschreibt Züge für die Verlaufsliste
     camera/                Kamera-Bibliothek: Kalibrierung, Erkennung, Zugtracker
 frontend/scripts/logic.test.ts      Tests für die reine Logik (npm test)
 frontend/scripts/games.test.ts      Tests für die Spiellogik der neuen Bretter
 frontend/scripts/camera.test.ts     Tests für Geometrie, Farben, Detektor und Tracker
+frontend/scripts/cameraAnalysis.test.ts  Tests für Live-Feedback und Zuganalyse
 ```
 
 Der Katalog in `lib/gameTypes.ts` listet alle fünf Spiele als spielbar. Die
@@ -457,6 +462,22 @@ Admins bekommen pro Zeile „Zurücksetzen“: Das Formular schickt einen Zielwe
 zurückgesetzt; der alte Wert bleibt im Reset-Protokoll des Backends. Hosts sehen
 die Rangliste, aber keine Reset-Bedienelemente.
 
+### Profil und Freundschaften
+
+`/profile` zeigt das eigene Konto mit Partien, Siegen, Sitzungen, Rating und der
+Freundesliste. Unter „Personen finden“ lässt sich nach aktiven Konten suchen;
+je nach Stand erscheint dort „Anfrage senden“, „Annehmen“/„Ablehnen“,
+„Zurückziehen“ oder „Freund:in“. Eigene Freund:innen können direkt entfernt
+werden. Ein gesperrtes Konto darf die Liste lesen, aber keine Anfrage stellen
+oder beantworten (`require_write`).
+
+Anfragen liegen in `friendships` (Migration `20261110000000_friends.sql`): eine
+Zeile pro gerichteter Anfrage mit `pending`, `accepted` oder `declined`. Eine
+angenommene Zeile gilt für beide Personen, weil die Leserouten immer beide
+Richtungen abfragen. Die Tabelle verhindert Selbstanfragen und doppelte
+Richtungen; eine abgelehnte Anfrage darf später erneut gestellt werden und wird
+dann ersetzt. `useLiveData` lädt die Übersicht nach jeder Aktion neu.
+
 ### Meldungs-Visualisierung
 
 `ReportVisualisation` zeigt die Gesamtzahl, die Statusverteilung als gestapelten
@@ -475,7 +496,7 @@ kommen aus `GET /api/reports/visualisation` und werden nur für Admins geladen.
 | `/camera`          | Kamera-/Brettverfolgung                                        | host/admin                 |
 | `/ratings`         | eigenes Rating (player) bzw. Rangliste und Admin-Reset         | angemeldet                 |
 | `/reports`         | Meldungs-Visualisierung und Verwaltung                         | admin                      |
-| `/profile`         | eigenes Profil inkl. Rating                                    | angemeldet                 |
+| `/profile`         | eigenes Profil inkl. Rating und Freundschaften                 | angemeldet                 |
 | `/play`            | Brett direkt im Tab, ohne Sitzung                              | angemeldet                 |
 | `/connectfour/:id` | Spielfeld-Fenster, wird per `window.open` als Pop-up geöffnet  | Mitwirkende, Host, Admin   |
 
@@ -634,6 +655,36 @@ Schwellwerte in `ConnectFourDetectorOptions.thresholds` angepasst werden.
 `npm test` prüft Geometrie, Farbklassifikation, Detektor und Tracker mit
 synthetischen Bildern – ohne Browser und ohne Kamera.
 
+### Kamera-Live-Feedback und Zuganalyse
+
+Neben dem Kamerabild zeigt `/camera` ein Panel „Live-Feedback & Analyse“. Die
+reine Logik liegt in `lib/cameraAnalysis.ts`, die Darstellung in
+`components/CameraAnalysis.tsx`:
+
+* **Erkennungsstatus.** `describeDetection` fasst den letzten ausgewerteten
+  Frame zusammen: „Warte auf das erste Bild“, „Erkennung stabil“, „Erkennung
+  prüfen“ bei zu vielen unsicheren Zellen oder „Keine neuen Bilder“, wenn der
+  letzte Frame älter als drei Sekunden ist. Dazu kommen die Anzahl der Bilder,
+  die durchschnittliche Konfidenz, unsichere Zellen und das Alter des letzten
+  Frames. Unsichere Zellen werden zusätzlich im erkannten Brett markiert.
+* **Neuer Zug.** Der zuletzt bestätigte Zug wird kurz als Overlay eingeblendet
+  („Rot: Spalte 4“ mit Zugnummer und Konfidenz), damit die Erkennung ohne Blick
+  auf die Zugliste nachvollziehbar ist. Das Overlay verschwindet nach vier
+  Sekunden.
+* **Drohungen.** `threatColumns` meldet Spalten, in denen die eigene Seite
+  sofort gewinnen kann, und solche, die der Gegner im nächsten Zug gewinnt.
+* **Zugqualität.** `assessMoves` baut das Brett aus dem Startzustand und den
+  erkannten Zügen neu auf und bewertet für die letzten zehn Züge die Stellung
+  *vor* jedem Zug mit `estimateMoveChances`. Daraus entstehen Siegchance, verpasste Chance und eine
+  Note von „Bester Zug“ über „Gut“ und „Ungenau“ bis „Fehler“; `summariseMoves`
+  fasst sie zu einer Genauigkeit in Prozent zusammen.
+
+`useCameraMoveTracker` liefert dafür zusätzlich `frames`, `lastUpdateAt` und
+`log` (Züge und Resets). Die Auswertung ist eine Orientierung: Sie läuft mit
+wenigen Monte-Carlo-Simulationen im Browser und greift nicht in Erkennung,
+Regeln oder Speicherung ein. `scripts/cameraAnalysis.test.ts` prüft Status,
+Sofortsieg und die Benotung eines entscheidenden Zuges.
+
 ### Spielverläufe prüfen
 
 `lib/connectFour.ts` validiert einen abgeschlossenen Verlauf, bevor er
@@ -680,6 +731,12 @@ Datenzugriff der Oberfläche. Die Tabelle nennt deshalb auch die passende
 | POST    | `/api/register`                         | neues Konto (immer `player`)           | `register`              | `users`, `auth_tokens` |
 | POST    | `/api/logout`                           | Token ungültig machen                  | `logout`                | `auth_tokens` |
 | GET     | `/api/me`                               | angemeldete Person und Rechte          | –                       | `users`, `v_user_permissions` |
+| GET     | `/api/friends`                          | Freund:innen, eingehende und ausgehende Anfragen | `getFriends`   | `friendships`, `users` |
+| POST    | `/api/friends/requests`                 | Anfrage senden (`user_id`, optional `message`) | `sendFriendRequest` | `friendships`, `users` |
+| POST    | `/api/friends/requests/{id}/accept`     | Anfrage annehmen (nur gefragte Person) | `acceptFriendRequest`   | `friendships` |
+| POST    | `/api/friends/requests/{id}/decline`    | Anfrage ablehnen (nur gefragte Person) | `declineFriendRequest`  | `friendships` |
+| DELETE  | `/api/friends/requests/{id}`            | eigene offene Anfrage zurückziehen     | `cancelFriendRequest`   | `friendships` |
+| DELETE  | `/api/friends/{id}`                     | Freundschaft mit Person `{id}` entfernen | `removeFriend`        | `friendships` |
 | GET     | `/api/admin/users`                      | Benutzerverwaltung (nur Admin)         | –                       | `users` |
 | PATCH   | `/api/admin/users/{id}`                 | Rolle/Sperre ändern (nur Admin)        | –                       | `users` |
 | GET     | `/api/games`                            | Spieltypen aus `game_types`            | `getGameTypes`, `getGameType` | `game_types` |
@@ -705,6 +762,19 @@ Datenzugriff der Oberfläche. Die Tabelle nennt deshalb auch die passende
 | GET     | `/api/reports/{id}`                     | eine Meldung (nur Admin)               | –                       | `player_reports` |
 | PATCH   | `/api/reports/{id}`                     | Meldung prüfen / Status ändern (nur Admin) | `updateReport`      | dito |
 | DELETE  | `/api/reports/{id}`                     | Meldung löschen (nur Admin)            | `deleteReport`          | dito |
+
+### Freundschaften
+
+`GET /api/friends` ist für alle angemeldeten Konten lesbar und liefert
+`friends`, `incoming` und `outgoing`. Schreibende Routen prüfen zusätzlich
+`require_write`; ein gesperrtes Konto erhält `403`. Eine Anfrage an sich selbst
+oder an ein gesperrtes Konto wird mit `400` abgelehnt, eine bereits bestehende
+Freundschaft mit `409`. Annehmen und Ablehnen darf nur die gefragte Person
+(sonst `403`), Zurückziehen nur die anfragende; unbekannte oder nicht mehr
+offene Zeilen antworten mit `404`. `DELETE /api/friends/{id}` erwartet die
+Kennung der anderen Person, nicht die Zeile aus `friendships`. Eine abgelehnte
+Anfrage darf später erneut gestellt werden; die API ersetzt die alte Zeile.
+
 ### Ratings und Meldungs-Visualisierung
 
 Ratings sind Elo-Werte. Beide Sitzplätze müssen zu registrierten Konten
@@ -749,7 +819,7 @@ notfalls mit dem Startwert und leeren Zählern.
 ## Prüfen
 
 ```bash
-npm test                    # Router, Spiellogik, Ableitungen, Ergebnis-Prüfung (Node, ohne Browser)
+npm test                    # Router, Spiellogik, Ableitungen, Kamera-Feedback, Ergebnis-Prüfung
 npm run lint                # eslint inkl. React-Compiler-Regeln
 npm run build               # tsc -b && vite build -> frontend/dist/
 npm run backend:check       # cargo check

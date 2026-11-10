@@ -279,6 +279,31 @@ export interface ResetRatingInput {
   resetStats?: boolean;
 }
 
+/* ------------------------------------------------------------------- Freunde */
+
+/** Ein Konto in der Freundesliste, ergaenzt um das Datum der Freundschaft. */
+export interface FriendUser extends User {
+  friendsSince: string;
+}
+
+export type FriendRequestDirection = "incoming" | "outgoing";
+
+/** Offene Anfrage; `user` ist je nach Richtung die andere Person. */
+export interface FriendRequest {
+  id: number;
+  direction: FriendRequestDirection;
+  message: string | null;
+  createdAt: string;
+  user: User;
+}
+
+/** Alles, was die Profilseite fuer Freundschaften braucht. */
+export interface FriendOverview {
+  friends: FriendUser[];
+  incoming: FriendRequest[];
+  outgoing: FriendRequest[];
+}
+
 /* --------------------------------------------------- Meldungs-Visualisierung */
 
 export type ReportStatusCounts = Record<ReportStatus, number>;

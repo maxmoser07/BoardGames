@@ -379,6 +379,112 @@ export function estimateWinningOdds(
   return result;
 }
 
+/* ------------------------------------------------------- Zugbewertung (Kamera) */
+
+export interface MoveChances {
+  /** Siegchance je Spalte in Prozent; `null` = Spalte nicht spielbar. */
+  chances: Array<number | null>;
+  bestColumn: number | null;
+  bestChance: number;
+  finished: boolean;
+}
+
+const MAX_MOVE_CACHE_ENTRIES = 64;
+const moveCache = new Map<string, MoveChances>();
+
+function trimMoveCache(): void {
+  while (moveCache.size > MAX_MOVE_CACHE_ENTRIES) {
+    const oldest = moveCache.keys().next().value;
+    if (oldest === undefined) break;
+    moveCache.delete(oldest);
+  }
+}
+
+/**
+ * Bewertet jede legale Spalte einzeln. `estimateWinningOdds` liefert nur die
+ * beste Spalte; fuer die Kamera-Analyse wird zusaetzlich die tatsaechlich
+ * gespielte Spalte bewertet, um den Zug einordnen zu koennen.
+ */
+export function estimateMoveChances(
+  board: OddsBoard,
+  currentPlayer: Side,
+  options: OddsOptions = {},
+): MoveChances {
+  const samples = clampSamples(options.samples ?? DEFAULT_MOVE_SAMPLES);
+  const grid = normaliseBoard(board);
+  const key = `${boardKey(grid, currentPlayer, samples, 0)}|chances`;
+
+  const cached = moveCache.get(key);
+  if (cached !== undefined) return cached;
+
+  const chances: Array<number | null> = Array.from({ length: COLS }, () => null);
+  const heights = heightsOf(grid);
+  const finished = findWinner(grid) !== null || heights.every((height) => height >= ROWS);
+  if (finished) {
+    const result: MoveChances = {
+      chances,
+      bestColumn: null,
+      bestChance: 0,
+      finished: true,
+    };
+    moveCache.set(key, result);
+    trimMoveCache();
+    return result;
+  }
+
+  const immediate = winningColumns(grid, heights, currentPlayer);
+  if (immediate.length > 0) {
+    for (const col of immediate) chances[col] = 100;
+    const result: MoveChances = {
+      chances,
+      bestColumn: mostCentral(immediate),
+      bestChance: 100,
+      finished: false,
+    };
+    moveCache.set(key, result);
+    trimMoveCache();
+    return result;
+  }
+
+  const seed = boardSeed(grid, currentPlayer);
+  let bestColumn: number | null = null;
+  let bestChance = 0;
+
+  for (const col of legalColumns(heights)) {
+    const chance = Math.round(estimateMove(grid, heights, col, currentPlayer, seed, samples) * 100);
+    chances[col] = chance;
+    const moreCentral = bestColumn !== null && Math.abs(col - 3) < Math.abs(bestColumn - 3);
+    if (
+      bestColumn === null ||
+      chance > bestChance ||
+      (chance === bestChance && moreCentral)
+    ) {
+      bestColumn = col;
+      bestChance = chance;
+    }
+  }
+
+  const result: MoveChances = {
+    chances,
+    bestColumn,
+    bestChance,
+    finished: false,
+  };
+  moveCache.set(key, result);
+  trimMoveCache();
+  return result;
+}
+
+/**
+ * Spalten, mit denen `side` im naechsten Zug sofort gewinnt. Fuer die
+ * Live-Analyse in der Kamera-Ansicht (Drohungen erkennen).
+ */
+export function immediateWinningColumns(board: OddsBoard, side: Side): number[] {
+  const grid = normaliseBoard(board);
+  if (findWinner(grid) !== null) return [];
+  return winningColumns(grid, heightsOf(grid), side);
+}
+
 export interface OddsLabels {
   red?: string;
   yellow?: string;

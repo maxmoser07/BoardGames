@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 
 import { AppShell } from "./components/AppShell";
+import { CameraAnalysis } from "./components/CameraAnalysis";
 import { Badge, EmptyState, Notice, Spinner } from "./components/ui";
 import { WinOdds } from "./components/WinOdds";
 import { useCameraMoveTracker } from "./hooks/useCameraMoveTracker";
@@ -115,6 +116,8 @@ const CameraView: React.FC = () => {
     board,
     moves,
     observation,
+    frames,
+    lastUpdateAt,
     start,
     stop,
     reset,
@@ -142,6 +145,7 @@ const CameraView: React.FC = () => {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedId, setSavedId] = useState<string | null>(null);
   const [snapNotice, setSnapNotice] = useState<string | null>(null);
+  const [dismissedFlash, setDismissedFlash] = useState<string | null>(null);
 
   const winner = useMemo(() => winnerOf(board), [board]);
   const counts = useMemo(() => {
@@ -159,17 +163,33 @@ const CameraView: React.FC = () => {
   const nextSide: Side = counts.red === counts.yellow ? "red" : "yellow";
   const sideDisplay = CHIP_PALETTES[palette].sides;
 
+  // Kurzes Live-Feedback, sobald der Tracker einen Stein bestaetigt hat. Die
+  // Anzeige wird aus den Zuegen abgeleitet; der Zeitgeber markiert sie nach
+  // vier Sekunden als gelesen. `aria-live` liest die Meldung vor.
+  const latestMove = moves.length === 0 ? null : moves[moves.length - 1];
+  const flashKey =
+    latestMove === null ? null : `${latestMove.turn}:${latestMove.capturedAt}`;
+  const flashMove =
+    latestMove !== null && flashKey !== dismissedFlash ? latestMove : null;
+
+  useEffect(() => {
+    if (flashKey === null) return;
+    const timeout = window.setTimeout(() => setDismissedFlash(flashKey), 4000);
+    return () => window.clearTimeout(timeout);
+  }, [flashKey]);
+
   // Der Tracker speichert den Startzustand und legt erkannte Züge darauf. Um zu
   // erkennen, ob die Partie auf einem leeren Brett begann, werden die Züge
   // wieder abgezogen. Nur dann ist der Verlauf vollständig speicherbar.
-  const baselineEmpty = useMemo(() => {
+  const baselineBoard = useMemo(() => {
     if (!calibrated) return null;
     const baseline = board.map((line) => [...line]);
     for (const move of moves) {
       baseline[move.location.y][move.location.x] = null;
     }
-    return isEmptyBoard(baseline);
+    return baseline;
   }, [board, calibrated, moves]);
+  const baselineEmpty = baselineBoard === null ? null : isEmptyBoard(baselineBoard);
 
   const canSave =
     calibrated &&
@@ -531,6 +551,24 @@ const CameraView: React.FC = () => {
               <canvas ref={canvasRef} className="camera-stage__overlay" aria-hidden="true" />
             ) : null}
 
+            {flashMove !== null && calibrated ? (
+              <div className="camera-flash" role="status" aria-live="polite">
+                <span
+                  className={`camera-dot camera-dot--${sideDisplay[flashMove.side].tone}`}
+                  aria-hidden="true"
+                />
+                <span>
+                  <strong>
+                    {sideDisplay[flashMove.side].label}: Spalte {flashMove.location.x + 1}
+                  </strong>
+                  <span>
+                    Zug {flashMove.turn} erkannt · {Math.round(flashMove.confidence * 100)} %
+                    Konfidenz
+                  </span>
+                </span>
+              </div>
+            ) : null}
+
             {status !== "running" || videoSize === null ? (
               <div className="camera-stage__placeholder">
                 <CameraOff aria-hidden="true" size={34} />
@@ -711,13 +749,25 @@ const CameraView: React.FC = () => {
 
               <div className="camera-board" role="grid" aria-label="Erkanntes Vier-Gewinnt-Brett">
                 {board.map((line, row) =>
-                  line.map((cell, col) => (
-                    <span
-                      key={`${row}-${col}`}
-                      className={`camera-board__cell ${cell === null ? "" : sideDisplay[cell].tone}`}
-                      aria-hidden="true"
-                    />
-                  )),
+                  line.map((cell, col) => {
+                    const confidence = observation?.cells[row]?.[col]?.confidence ?? null;
+                    return (
+                      <span
+                        key={`${row}-${col}`}
+                        className={`camera-board__cell ${cell === null ? "" : sideDisplay[cell].tone}`}
+                        title={
+                          confidence === null
+                            ? undefined
+                            : `Erkennung: ${Math.round(confidence * 100)} %`
+                        }
+                        aria-hidden="true"
+                      >
+                        {confidence !== null && confidence < 0.5 ? (
+                          <i className="camera-board__uncertain" />
+                        ) : null}
+                      </span>
+                    );
+                  }),
                 )}
               </div>
 
@@ -739,6 +789,19 @@ const CameraView: React.FC = () => {
 
               <WinOdds
                 board={board}
+                currentPlayer={nextSide}
+                winner={winner}
+                labels={{ red: sideDisplay.red.label, yellow: sideDisplay.yellow.label }}
+                tones={{ red: sideDisplay.red.tone, yellow: sideDisplay.yellow.tone }}
+              />
+
+              <CameraAnalysis
+                board={board}
+                startBoard={baselineBoard}
+                moves={moves}
+                observation={observation}
+                frames={frames}
+                lastUpdateAt={lastUpdateAt}
                 currentPlayer={nextSide}
                 winner={winner}
                 labels={{ red: sideDisplay.red.label, yellow: sideDisplay.yellow.label }}

@@ -22,6 +22,15 @@ import type {
 
 export type CameraTrackerStatus = "idle" | "starting" | "running" | "error";
 
+/** Letzte auffaellige Ereignisse fuer das Live-Feedback. */
+export interface CameraTrackerLogEntry {
+  id: number;
+  type: "move" | "reset";
+  at: number;
+  move?: TrackedMove;
+  reason?: "board-cleared" | "resync";
+}
+
 export interface UseCameraMoveTrackerResult {
   videoRef: RefObject<HTMLVideoElement | null>;
   status: CameraTrackerStatus;
@@ -30,6 +39,12 @@ export interface UseCameraMoveTrackerResult {
   moves: TrackedMove[];
   /** Letzte ausgewertete Beobachtung, inkl. Konfidenz – `null` vor dem ersten Frame. */
   observation: BoardObservation | null;
+  /** Anzahl der ausgewerteten Frames seit dem letzten `reset`. */
+  frames: number;
+  /** Zeitpunkt des letzten Frames (ms seit Epoche); `null` vor dem ersten. */
+  lastUpdateAt: number | null;
+  /** Erkannte Zuege und Resets, neueste zuerst. */
+  log: CameraTrackerLogEntry[];
   start: () => Promise<void>;
   stop: () => void;
   reset: () => void;
@@ -50,22 +65,43 @@ export function useCameraMoveTracker(
   const [board, setBoard] = useState<BoardState>(() => emptyBoard(options.layout));
   const [moves, setMoves] = useState<TrackedMove[]>([]);
   const [observation, setObservation] = useState<BoardObservation | null>(null);
+  const [frames, setFrames] = useState(0);
+  const [lastUpdateAt, setLastUpdateAt] = useState<number | null>(null);
+  const [log, setLog] = useState<CameraTrackerLogEntry[]>([]);
+  const logIdRef = useRef(0);
 
   useEffect(() => {
     optionsRef.current = options;
   }, [options]);
 
-  const handleEvent = useCallback((event: TrackerEvent) => {
-    setBoard(event.board);
-    if (event.type === "update") {
-      setObservation(event.observation);
-    } else if (event.type === "move") {
-      setMoves((current) => [...current, event.move]);
-    } else if (event.type === "reset") {
-      setMoves([]);
-      setObservation(null);
-    }
+  const appendLog = useCallback((entry: Omit<CameraTrackerLogEntry, "id" | "at">) => {
+    logIdRef.current += 1;
+    const next: CameraTrackerLogEntry = {
+      ...entry,
+      id: logIdRef.current,
+      at: Date.now(),
+    };
+    setLog((current) => [next, ...current].slice(0, 12));
   }, []);
+
+  const handleEvent = useCallback(
+    (event: TrackerEvent) => {
+      setBoard(event.board);
+      if (event.type === "update") {
+        setObservation(event.observation);
+        setFrames((current) => current + 1);
+        setLastUpdateAt(Date.now());
+      } else if (event.type === "move") {
+        setMoves((current) => [...current, event.move]);
+        appendLog({ type: "move", move: event.move });
+      } else if (event.type === "reset") {
+        setMoves([]);
+        setObservation(null);
+        appendLog({ type: "reset", reason: event.reason });
+      }
+    },
+    [appendLog],
+  );
 
   const ensureTracker = useCallback((): CameraMoveTracker => {
     if (trackerRef.current === null) {
@@ -106,6 +142,10 @@ export function useCameraMoveTracker(
     setBoard(emptyBoard(optionsRef.current.layout));
     setMoves([]);
     setObservation(null);
+    setFrames(0);
+    setLastUpdateAt(null);
+    setLog([]);
+    logIdRef.current = 0;
   }, []);
 
   const calibrate = useCallback((corners: BoardCorners): void => {
@@ -131,6 +171,9 @@ export function useCameraMoveTracker(
     board,
     moves,
     observation,
+    frames,
+    lastUpdateAt,
+    log,
     start,
     stop,
     reset,

@@ -18,8 +18,8 @@ use sqlx::mysql::MySqlPool;
 use sqlx::{MySql, QueryBuilder, Transaction};
 
 use crate::db::{
-    AdminUser, AuthUser, GameMove, GameType, PlayerRating, PlayerReport, Session, SessionPlayer,
-    User, UserProfile,
+    AdminUser, AuthUser, Friend, FriendRequestRow, GameMove, GameType, PlayerRating, PlayerReport,
+    Session, SessionPlayer, User, UserProfile,
 };
 
 pub const CONNECT_FOUR: &str = "connect-four";
@@ -332,6 +332,21 @@ pub fn router() -> Router<MySqlPool> {
         .route("/api/users", get(list_users))
         .route("/api/users/{id}", get(read_user))
         .route("/api/profile/{id}", get(read_user))
+        .route("/api/friends", get(list_friends))
+        .route("/api/friends/requests", post(send_friend_request))
+        .route(
+            "/api/friends/requests/{id}/accept",
+            post(accept_friend_request),
+        )
+        .route(
+            "/api/friends/requests/{id}/decline",
+            post(decline_friend_request),
+        )
+        .route(
+            "/api/friends/requests/{id}",
+            delete(cancel_friend_request),
+        )
+        .route("/api/friends/{id}", delete(remove_friend))
         .route("/api/login", post(login))
         .route("/api/auth/login", post(login))
         .route("/api/users/login", post(login))
@@ -607,6 +622,352 @@ pub async fn read_user(
     .ok_or_else(|| ApiError::NotFound(format!("no user with id {id}")))?;
 
     Ok(Json(json!(user)))
+}
+
+/* ------------------------------------------------------- Freunde, Anfragen */
+
+fn friend_json(friend: &Friend) -> Value {
+    json!({
+        "id": friend.id,
+        "username": friend.username,
+        "role": friend.role,
+        "friends_since": friend.since,
+    })
+}
+
+fn friend_request_json(row: &FriendRequestRow, direction: &str) -> Value {
+    json!({
+        "id": row.id,
+        "direction": direction,
+        "message": row.message,
+        "created_at": row.created_at,
+        "user": {
+            "id": row.user_id,
+            "username": row.username,
+            "role": row.role,
+        },
+    })
+}
+
+/// Anfrage samt der jeweils anderen Person. `outgoing` waehlt die Richtung:
+/// ausgehend zeigt auf die gefragte Person, eingehend auf die fragende.
+async fn fetch_friend_request(
+    pool: &MySqlPool,
+    id: u64,
+    outgoing: bool,
+) -> Result<FriendRequestRow, ApiError> {
+    let join = if outgoing {
+        "f.addressee_id"
+    } else {
+        "f.requester_id"
+    };
+    let sql = format!(
+        "SELECT f.id, u.id AS user_id, u.username, u.role, f.message,
+                CAST(DATE_FORMAT(f.created_at, '%Y-%m-%dT%H:%i:%sZ') AS CHAR) AS created_at
+         FROM friendships f
+         JOIN users u ON u.id = {join}
+         WHERE f.id = ?"
+    );
+    sqlx::query_as::<_, FriendRequestRow>(&sql)
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(internal)?
+        .ok_or_else(|| ApiError::NotFound(format!("no friend request with id {id}")))
+}
+
+/// Freund:innen, eingehende und ausgehende offene Anfragen der angemeldeten
+/// Person. Angenommene Zeilen gelten in beide Richtungen.
+pub async fn list_friends(
+    State(pool): State<MySqlPool>,
+    user: CurrentUser,
+) -> Result<Json<Value>, ApiError> {
+    let friends = sqlx::query_as::<_, Friend>(
+        "SELECT u.id, u.username, u.role,
+                CAST(DATE_FORMAT(COALESCE(f.responded_at, f.created_at),
+                                 '%Y-%m-%dT%H:%i:%sZ') AS CHAR) AS since
+         FROM friendships f
+         JOIN users u ON u.id = IF(f.requester_id = ?, f.addressee_id, f.requester_id)
+         WHERE f.status = 'accepted' AND (f.requester_id = ? OR f.addressee_id = ?)
+         ORDER BY u.username",
+    )
+    .bind(user.id)
+    .bind(user.id)
+    .bind(user.id)
+    .fetch_all(&pool)
+    .await
+    .map_err(internal)?;
+
+    let incoming = sqlx::query_as::<_, FriendRequestRow>(
+        "SELECT f.id, u.id AS user_id, u.username, u.role, f.message,
+                CAST(DATE_FORMAT(f.created_at, '%Y-%m-%dT%H:%i:%sZ') AS CHAR) AS created_at
+         FROM friendships f
+         JOIN users u ON u.id = f.requester_id
+         WHERE f.addressee_id = ? AND f.status = 'pending'
+         ORDER BY f.created_at DESC",
+    )
+    .bind(user.id)
+    .fetch_all(&pool)
+    .await
+    .map_err(internal)?;
+
+    let outgoing = sqlx::query_as::<_, FriendRequestRow>(
+        "SELECT f.id, u.id AS user_id, u.username, u.role, f.message,
+                CAST(DATE_FORMAT(f.created_at, '%Y-%m-%dT%H:%i:%sZ') AS CHAR) AS created_at
+         FROM friendships f
+         JOIN users u ON u.id = f.addressee_id
+         WHERE f.requester_id = ? AND f.status = 'pending'
+         ORDER BY f.created_at DESC",
+    )
+    .bind(user.id)
+    .fetch_all(&pool)
+    .await
+    .map_err(internal)?;
+
+    Ok(Json(json!({
+        "friends": friends.iter().map(friend_json).collect::<Vec<Value>>(),
+        "incoming": incoming
+            .iter()
+            .map(|row| friend_request_json(row, "incoming"))
+            .collect::<Vec<Value>>(),
+        "outgoing": outgoing
+            .iter()
+            .map(|row| friend_request_json(row, "outgoing"))
+            .collect::<Vec<Value>>(),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FriendRequestDto {
+    user_id: u64,
+    #[serde(default)]
+    message: Option<String>,
+}
+
+/// Legt eine Freundschaftsanfrage an. Abgelehnte Anfragen werden ersetzt, damit
+/// ein erneuter Versuch moeglich bleibt und keine doppelten Zeilen entstehen.
+pub async fn send_friend_request(
+    State(pool): State<MySqlPool>,
+    user: CurrentUser,
+    payload: Result<Json<FriendRequestDto>, JsonRejection>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    user.require_write()?;
+    let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+    if dto.user_id == user.id {
+        return bad("Du kannst dir selbst keine Anfrage schicken.".into());
+    }
+
+    let target_active = sqlx::query_scalar::<_, bool>(
+        "SELECT can_write FROM v_user_permissions WHERE id = ?",
+    )
+    .bind(dto.user_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(internal)?
+    .ok_or_else(|| ApiError::NotFound(format!("no user with id {}", dto.user_id)))?;
+    if !target_active {
+        return bad("Das Konto ist gesperrt und kann keine Anfragen beantworten.".into());
+    }
+
+    let message = dto
+        .message
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if message.is_some_and(|value| value.chars().count() > 255) {
+        return bad("message must not exceed 255 characters".into());
+    }
+
+    let accepted = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM friendships
+         WHERE status = 'accepted'
+           AND ((requester_id = ? AND addressee_id = ?)
+             OR (requester_id = ? AND addressee_id = ?))",
+    )
+    .bind(user.id)
+    .bind(dto.user_id)
+    .bind(dto.user_id)
+    .bind(user.id)
+    .fetch_one(&pool)
+    .await
+    .map_err(internal)?;
+    if accepted > 0 {
+        return Err(ApiError::Conflict("Ihr seid bereits befreundet.".into()));
+    }
+
+    let mut tx = pool.begin().await.map_err(internal)?;
+    // Eine abgelehnte oder anders gerichtete offene Zeile wird durch die neue
+    // Anfrage ersetzt; angenommene Zeilen sind oben schon ausgeschlossen.
+    sqlx::query(
+        "DELETE FROM friendships
+         WHERE status <> 'accepted'
+           AND ((requester_id = ? AND addressee_id = ?)
+             OR (requester_id = ? AND addressee_id = ?))",
+    )
+    .bind(user.id)
+    .bind(dto.user_id)
+    .bind(dto.user_id)
+    .bind(user.id)
+    .execute(&mut *tx)
+    .await
+    .map_err(internal)?;
+
+    let insert = sqlx::query(
+        "INSERT INTO friendships (requester_id, addressee_id, status, message)
+         VALUES (?, ?, 'pending', ?)",
+    )
+    .bind(user.id)
+    .bind(dto.user_id)
+    .bind(message)
+    .execute(&mut *tx)
+    .await
+    .map_err(internal)?;
+    let id = insert.last_insert_id();
+    tx.commit().await.map_err(internal)?;
+
+    let request = fetch_friend_request(&pool, id, true).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(friend_request_json(&request, "outgoing")),
+    ))
+}
+
+/// Annahme darf nur die gefragte Person. Andere offene Zeilen zwischen den
+/// beiden Konten verschwinden, damit genau eine Freundschaft uebrig bleibt.
+pub async fn accept_friend_request(
+    State(pool): State<MySqlPool>,
+    user: CurrentUser,
+    id: Result<Path<String>, PathRejection>,
+) -> Result<Json<Value>, ApiError> {
+    user.require_write()?;
+    let id = path_id(id)?;
+    let row = sqlx::query_as::<_, (u64, u64, String)>(
+        "SELECT requester_id, addressee_id, status FROM friendships WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(internal)?
+    .ok_or_else(|| ApiError::NotFound(format!("no friend request with id {id}")))?;
+    if row.1 != user.id {
+        return Err(ApiError::Forbidden(
+            "only the addressee may accept this request".into(),
+        ));
+    }
+    if row.2 != "pending" {
+        return Err(ApiError::Conflict("Diese Anfrage ist nicht mehr offen.".into()));
+    }
+
+    let mut tx = pool.begin().await.map_err(internal)?;
+    sqlx::query(
+        "DELETE FROM friendships
+         WHERE id <> ? AND status <> 'accepted'
+           AND ((requester_id = ? AND addressee_id = ?)
+             OR (requester_id = ? AND addressee_id = ?))",
+    )
+    .bind(id)
+    .bind(row.0)
+    .bind(row.1)
+    .bind(row.1)
+    .bind(row.0)
+    .execute(&mut *tx)
+    .await
+    .map_err(internal)?;
+    sqlx::query(
+        "UPDATE friendships SET status = 'accepted', responded_at = UTC_TIMESTAMP()
+         WHERE id = ? AND status = 'pending'",
+    )
+    .bind(id)
+    .execute(&mut *tx)
+    .await
+    .map_err(internal)?;
+    tx.commit().await.map_err(internal)?;
+
+    let request = fetch_friend_request(&pool, id, false).await?;
+    Ok(Json(friend_request_json(&request, "incoming")))
+}
+
+pub async fn decline_friend_request(
+    State(pool): State<MySqlPool>,
+    user: CurrentUser,
+    id: Result<Path<String>, PathRejection>,
+) -> Result<Json<Value>, ApiError> {
+    user.require_write()?;
+    let id = path_id(id)?;
+    let updated = sqlx::query(
+        "UPDATE friendships SET status = 'declined', responded_at = UTC_TIMESTAMP()
+         WHERE id = ? AND addressee_id = ? AND status = 'pending'",
+    )
+    .bind(id)
+    .bind(user.id)
+    .execute(&pool)
+    .await
+    .map_err(internal)?;
+    if updated.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!(
+            "no open friend request with id {id}"
+        )));
+    }
+    let request = fetch_friend_request(&pool, id, false).await?;
+    Ok(Json(friend_request_json(&request, "incoming")))
+}
+
+/// Zurueckziehen darf nur die Person, die die Anfrage gestellt hat.
+pub async fn cancel_friend_request(
+    State(pool): State<MySqlPool>,
+    user: CurrentUser,
+    id: Result<Path<String>, PathRejection>,
+) -> Result<Json<Value>, ApiError> {
+    user.require_write()?;
+    let id = path_id(id)?;
+    let deleted = sqlx::query(
+        "DELETE FROM friendships
+         WHERE id = ? AND requester_id = ? AND status = 'pending'",
+    )
+    .bind(id)
+    .bind(user.id)
+    .execute(&pool)
+    .await
+    .map_err(internal)?;
+    if deleted.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!(
+            "no pending friend request with id {id}"
+        )));
+    }
+    Ok(Json(json!({ "deleted": deleted.rows_affected() })))
+}
+
+/// Entfernt eine bestehende Freundschaft. `{id}` ist die Kennung der anderen
+/// Person, nicht die Zeile in `friendships`.
+pub async fn remove_friend(
+    State(pool): State<MySqlPool>,
+    user: CurrentUser,
+    id: Result<Path<String>, PathRejection>,
+) -> Result<Json<Value>, ApiError> {
+    user.require_write()?;
+    let id = path_id(id)?;
+    if id == user.id {
+        return bad("Das ist dein eigenes Konto.".into());
+    }
+    let deleted = sqlx::query(
+        "DELETE FROM friendships
+         WHERE status = 'accepted'
+           AND ((requester_id = ? AND addressee_id = ?)
+             OR (requester_id = ? AND addressee_id = ?))",
+    )
+    .bind(user.id)
+    .bind(id)
+    .bind(id)
+    .bind(user.id)
+    .execute(&pool)
+    .await
+    .map_err(internal)?;
+    if deleted.rows_affected() == 0 {
+        return Err(ApiError::NotFound(format!(
+            "no friendship with user {id}"
+        )));
+    }
+    Ok(Json(json!({ "deleted": deleted.rows_affected() })))
 }
 
 #[derive(Debug, Deserialize)]
