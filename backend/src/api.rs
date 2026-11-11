@@ -855,7 +855,9 @@ pub async fn accept_friend_request(
         ));
     }
     if row.2 != "pending" {
-        return Err(ApiError::Conflict("Diese Anfrage ist nicht mehr offen.".into()));
+        return Err(ApiError::NotFound(format!(
+            "no open friend request with id {id}"
+        )));
     }
 
     let mut tx = pool.begin().await.map_err(internal)?;
@@ -894,6 +896,25 @@ pub async fn decline_friend_request(
 ) -> Result<Json<Value>, ApiError> {
     user.require_write()?;
     let id = path_id(id)?;
+    let row = sqlx::query_as::<_, (u64, u64, String)>(
+        "SELECT requester_id, addressee_id, status FROM friendships WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(internal)?
+    .ok_or_else(|| ApiError::NotFound(format!("no friend request with id {id}")))?;
+    if row.1 != user.id {
+        return Err(ApiError::Forbidden(
+            "only the addressee may decline this request".into(),
+        ));
+    }
+    if row.2 != "pending" {
+        return Err(ApiError::NotFound(format!(
+            "no open friend request with id {id}"
+        )));
+    }
+
     let updated = sqlx::query(
         "UPDATE friendships SET status = 'declined', responded_at = UTC_TIMESTAMP()
          WHERE id = ? AND addressee_id = ? AND status = 'pending'",
@@ -903,6 +924,8 @@ pub async fn decline_friend_request(
     .execute(&pool)
     .await
     .map_err(internal)?;
+    // Zwischen SELECT und UPDATE kann die Anfrage zurueckgezogen oder
+    // angenommen worden sein.
     if updated.rows_affected() == 0 {
         return Err(ApiError::NotFound(format!(
             "no open friend request with id {id}"

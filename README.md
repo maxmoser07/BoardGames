@@ -471,7 +471,7 @@ je nach Stand erscheint dort „Anfrage senden“, „Annehmen“/„Ablehnen“
 werden. Ein gesperrtes Konto darf die Liste lesen, aber keine Anfrage stellen
 oder beantworten (`require_write`).
 
-Anfragen liegen in `friendships` (Migration `20261110000000_friends.sql`): eine
+Anfragen liegen in `friendships` (Migration `20261110000002_friends.sql`): eine
 Zeile pro gerichteter Anfrage mit `pending`, `accepted` oder `declined`. Eine
 angenommene Zeile gilt für beide Personen, weil die Leserouten immer beide
 Richtungen abfragen. Die Tabelle verhindert Selbstanfragen und doppelte
@@ -848,9 +848,11 @@ kommen nur über ein frisches Volume zurück.
 Ausschließlich neue Dateien unter `backend/migrations/` anlegen, im Format
 `<timestamp>_<beschreibung>.sql`. Bereits angewandte Migrationen werden nicht
 angefasst: sqlx speichert deren Prüfsummen und verweigert den Start, wenn sie
-sich ändern. Für die Tabellenstruktur, die Einschränkungen und den
-Rust-Abgleich siehe die Kommentare in
-`backend/migrations/20250101000000_init_schema.sql`.
+sich ändern. Der Zeitstempel ist die Version und muss eindeutig sein; zwei
+Dateien mit demselben Präfix (`20261110000000_...`) lässt sqlx nicht zu und
+meldet andernfalls „previously applied but has been modified“. Für die
+Tabellenstruktur, die Einschränkungen und den Rust-Abgleich siehe die
+Kommentare in `backend/migrations/20250101000000_init_schema.sql`.
 
 ## Bekannte Grenzen
 

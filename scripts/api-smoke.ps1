@@ -129,6 +129,69 @@ if ($hostRatings.Count -le 1) { throw "Host sieht keine vollstaendige Rangliste"
 Expect (Send GET "/admin/users" -token $hostToken) "Host liest Benutzerverwaltung" 403
 Expect (Send DELETE "/demo-data" -token $hostToken) "Host loescht Demo" 403
 
+Write-Host "`n== Freundschaftsanfragen =="
+$script:token = $aliceToken
+# Reste eines abgebrochenen Laufs entfernen; 404 heisst nur "war nicht da".
+Send DELETE "/friends/3" | Out-Null
+Send DELETE "/friends/4" | Out-Null
+Send DELETE "/friends/1" | Out-Null
+
+Expect (Send POST "/friends/requests" '{"user_id":2}') "Anfrage an sich selbst" 400
+Expect (Send POST "/friends/requests" '{"user_id":999999}') "Anfrage an unbekanntes Konto" 404
+
+$request = Ok (Send POST "/friends/requests" '{"user_id":3,"message":"Lust auf eine Partie?"}') "Anfrage an Bob"
+if ($request.direction -ne "outgoing" -or $request.user.id -ne 3) {
+  throw "Gesendete Anfrage zeigt nicht auf Bob"
+}
+if ($request.message -ne "Lust auf eine Partie?") { throw "Nachricht der Anfrage ging verloren" }
+
+$aliceOverview = Ok (Send GET "/friends") "Alice nach dem Senden"
+if (@($aliceOverview.outgoing).Count -ne 1) { throw "Ausgehende Anfrage fehlt bei Alice" }
+if (@($aliceOverview.outgoing | Where-Object { $_.id -eq $request.id }).Count -ne 1) {
+  throw "Alice sieht nicht ihre eigene offene Anfrage"
+}
+
+$bobOverview = Ok (Send GET "/friends" -token $bobToken) "Bob nach dem Senden"
+$incoming = @($bobOverview.incoming)
+if ($incoming.Count -ne 1 -or $incoming[0].id -ne $request.id) {
+  throw "Eingehende Anfrage fehlt bei Bob"
+}
+
+Expect (Send POST "/friends/requests/$($request.id)/accept" -token $hostToken) "Host nimmt fremde Anfrage an" 403
+$accepted = Ok (Send POST "/friends/requests/$($request.id)/accept" -token $bobToken) "Bob nimmt an"
+if ($accepted.direction -ne "incoming") { throw "Annahme lieferte die falsche Richtung" }
+Expect (Send POST "/friends/requests/$($request.id)/accept" -token $bobToken) "Anfrage zweimal annehmen" 404
+
+$aliceOverview = Ok (Send GET "/friends") "Alice nach der Annahme"
+if (@($aliceOverview.friends | Where-Object { $_.id -eq 3 }).Count -ne 1) {
+  throw "Bob fehlt in Alices Freundesliste"
+}
+$bobOverview = Ok (Send GET "/friends" -token $bobToken) "Bob nach der Annahme"
+if (@($bobOverview.friends | Where-Object { $_.id -eq 2 }).Count -ne 1) {
+  throw "Alice fehlt in Bobs Freundesliste"
+}
+
+# Ablehnen darf nur die gefragte Person.
+$declineRequest = Ok (Send POST "/friends/requests" '{"user_id":1}') "Anfrage an Host"
+Expect (Send POST "/friends/requests/$($declineRequest.id)/decline" -token $bobToken) "Bob lehnt fremde Anfrage ab" 403
+Ok (Send POST "/friends/requests/$($declineRequest.id)/decline" -token $hostToken) "Host lehnt ab" | Out-Null
+Expect (Send POST "/friends/requests/$($declineRequest.id)/decline" -token $hostToken) "Anfrage zweimal ablehnen" 404
+Expect (Send POST "/friends/requests/$($declineRequest.id)/accept" -token $hostToken) "Abgelehnte Anfrage annehmen" 404
+
+# Zurueckziehen darf nur die anfragende Person.
+$cancelRequest = Ok (Send POST "/friends/requests" '{"user_id":4}') "Anfrage an Mara"
+Expect (Send DELETE "/friends/requests/$($cancelRequest.id)" -token $bobToken) "Bob zieht fremde Anfrage zurueck" 404
+Ok (Send DELETE "/friends/requests/$($cancelRequest.id)") "Alice zieht Anfrage zurueck" | Out-Null
+Expect (Send DELETE "/friends/requests/$($cancelRequest.id)") "Anfrage zweimal zurueckziehen" 404
+
+# Entfernen beendet die angenommene Freundschaft fuer beide Seiten.
+Ok (Send DELETE "/friends/3") "Freundschaft mit Bob entfernen" | Out-Null
+Expect (Send DELETE "/friends/3") "Freundschaft zweimal entfernen" 404
+Write-Host "  Senden, Annehmen, Ablehnen, Zurueckziehen und Entfernen geprueft"
+
+# Der folgende Abschnitt legt Sitzungen an und braucht wieder den Host.
+$script:token = $hostToken
+
 Write-Host "`n== Sitzung anlegen und abweisen =="
 $open = Ok (Send POST "/sessions" '{"game_type":"connect-four","host_id":1,"players":{"red":2,"yellow":3}}') "/sessions"
 Write-Host "  offene Sitzung $($open.id), Plaetze $($open.players.user_id -join ' und ')"
@@ -277,7 +340,7 @@ if ($MitDemoLoeschen) {
   Ok (Send DELETE "/demo-data") "/demo-data" | Out-Null
   Write-Host "  Beispielpartie geloescht (nur mit -MitDemoLoeschen)"
 }
-$sql = 'DELETE FROM game_sessions WHERE JSON_EXTRACT(metadata_json, ''$.demo'') IS NOT TRUE; DELETE FROM player_ratings;'
+$sql = 'DELETE FROM game_sessions WHERE JSON_EXTRACT(metadata_json, ''$.demo'') IS NOT TRUE; DELETE FROM player_ratings; DELETE FROM friendships WHERE requester_id IN (1,2,3,4) OR addressee_id IN (1,2,3,4);'
 # mysql schreibt die Passwort-Warnung nach stderr, das wuerde mit
 # $ErrorActionPreference = "Stop" den Lauf abbrechen.
 $ErrorActionPreference = "Continue"

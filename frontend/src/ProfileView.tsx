@@ -23,7 +23,7 @@ import type { FriendRequest, PlayerRating, User } from "./types";
  *
  * Die Kennzahlen werden aus den ohnehin vorhandenen Sitzungs- und Verlaufsdaten
  * abgeleitet. Freundschaftsanfragen liegen in `friendships` (Migration
- * 20261110000000_friends.sql); senden, annehmen, ablehnen und entfernen laufen
+ * 20261110000002_friends.sql); senden, annehmen, ablehnen und entfernen laufen
  * über `api` und werden durch `useLiveData` sofort nachgeladen.
  */
 const ProfileView: React.FC = () => {
@@ -115,9 +115,19 @@ const ProfileView: React.FC = () => {
   );
 
   const loading =
-    profile.loading || games.loading || sessions.loading || rating.loading || friends.loading;
+    profile.loading ||
+    games.loading ||
+    sessions.loading ||
+    rating.loading ||
+    friends.loading ||
+    accounts.loading;
   const loadError =
-    profile.error ?? games.error ?? sessions.error ?? rating.error ?? friends.error;
+    profile.error ??
+    games.error ??
+    sessions.error ??
+    rating.error ??
+    friends.error ??
+    accounts.error;
   const user = profile.data ?? authUser;
   const friendOverview = friends.data;
   const incoming = friendOverview?.incoming ?? [];
