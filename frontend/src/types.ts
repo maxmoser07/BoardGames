@@ -46,6 +46,14 @@ export interface User {
  */
 export type AccentKey = "red" | "amber" | "violet" | "teal" | "blue" | "rose";
 
+export const ACCENT_KEYS: readonly AccentKey[] = ["red", "amber", "violet", "teal", "blue", "rose"];
+
+/**
+ * Vorlage, mit der ein Spiel gespielt wird. Die Administration wählt sie im
+ * UI; Brettmaße und Gewinnbedingung kommen aus `rules_json`.
+ */
+export type GameEngine = "connect-four" | "grid" | "memory" | "chess" | "mensch";
+
 export interface GameType {
   id: number;
   /** Schlüssel wie in `game_types.name` der Datenbank. */
@@ -56,7 +64,7 @@ export interface GameType {
   /** Ein Satz für die Detailseite. */
   description: string;
   maxPlayers: number;
-  /** false = in der Datenbank angelegt, im Frontend aber noch nicht spielbar. */
+  /** false = ohne Engine-Vorlage und damit noch nicht spielbar. */
   implemented: boolean;
   /** Brettmaße, `null` für Spiele ohne festes Raster. */
   board: { rows: number; cols: number } | null;
@@ -65,6 +73,12 @@ export interface GameType {
   rules: string[];
   /** Reihenfolge im Katalog. */
   sortOrder: number;
+  /** Spiel-Logik; `null` = Eintrag ohne Brett („in Arbeit“). */
+  engine: GameEngine | null;
+  /** Felder in einer Reihe für Raster-Spiele. */
+  winLength: number;
+  /** true = Steine fallen in die unterste freie Zeile (Vier-Gewinnt-Vorlage). */
+  gravity: boolean;
 }
 
 /**

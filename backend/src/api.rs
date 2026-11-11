@@ -361,6 +361,10 @@ pub fn router() -> Router<MySqlPool> {
         .route("/api/admin/users/{id}", patch(update_admin_user))
         .route("/api/admin/users/{id}", put(update_admin_user))
         .route("/api/games", get(list_game_types))
+        .route("/api/games", post(create_game_type))
+        .route("/api/games/{id}", patch(update_game_type))
+        .route("/api/games/{id}", put(update_game_type))
+        .route("/api/games/{id}", delete(delete_game_type))
         .route("/api/sessions", get(list_sessions))
         .route("/api/sessions", post(create_session))
         .route("/api/sessions/{id}", get(read_session))
@@ -1163,12 +1167,382 @@ pub async fn list_game_types(
     _user: CurrentUser,
 ) -> Result<Json<Value>, ApiError> {
     let games = sqlx::query_as::<_, GameType>(
-        "SELECT id, name, display_name, max_players FROM game_types ORDER BY id",
+        "SELECT id, name, display_name, max_players, rules_json FROM game_types ORDER BY id",
     )
     .fetch_all(&pool)
     .await
     .map_err(|e| ApiError::Internal(e.into()))?;
     Ok(Json(json!(games)))
+}
+
+/// Grenzen fuer neue Katalogspiele. `game_types.max_players` ist ein
+/// TINYINT UNSIGNED, mehr als 16 Sitzplaetze sind fuer die Oberflaeche aber
+/// nicht sinnvoll.
+const MIN_GAME_PLAYERS: u16 = 2;
+const MAX_GAME_PLAYERS: u16 = 16;
+
+#[derive(Debug, Deserialize)]
+pub struct CreateGameTypeDto {
+    name: String,
+    display_name: String,
+    #[serde(default = "default_game_players")]
+    max_players: u16,
+    /// Spiellogik und Darstellung; `None` = Eintrag ohne Brett („in Arbeit“).
+    #[serde(default)]
+    rules_json: Option<Value>,
+}
+
+fn default_game_players() -> u16 {
+    2
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateGameTypeDto {
+    display_name: Option<String>,
+    max_players: Option<u16>,
+    /// Fehlt das Feld, bleibt die Logik unveraendert. `null` entfernt sie.
+    #[serde(default, deserialize_with = "deserialize_some")]
+    rules_json: Option<Option<Value>>,
+}
+
+/// Unterscheidet ein fehlendes Feld (`None`) von einem ausdruecklichen `null`
+/// (`Some(None)`). Ohne diesen Helfer macht Serde aus beidem `None`.
+fn deserialize_some<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
+/// Vorlagen, die das Frontend als Brett umsetzen kann. Neue Spiele waehlen
+/// eine davon; `grid` ist ein freies Raster, `connect-four` laesst Steine fallen.
+const GAME_ENGINES: [&str; 5] = ["connect-four", "grid", "memory", "chess", "mensch"];
+const GAME_ACCENTS: [&str; 6] = ["red", "amber", "violet", "teal", "blue", "rose"];
+const MIN_BOARD_SIZE: u64 = 3;
+const MAX_BOARD_SIZE: u64 = 20;
+const MAX_RULES_JSON_BYTES: usize = 16 * 1024;
+
+/// Prueft die von der Administration bearbeitete Spiellogik. Die Struktur ist
+/// bewusst klein: das Frontend liest dieselben Felder, unbekannte Schluessel
+/// werden abgelehnt, damit sich kein beliebiger Code in der Datenbank sammelt.
+/// `game_name` liefert die Standard-Engine, wenn `rules_json` keine nennt.
+fn validate_rules_json(game_name: &str, value: &Value) -> Result<(), ApiError> {
+    let encoded = serde_json::to_string(value).map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    if encoded.len() > MAX_RULES_JSON_BYTES {
+        return bad(format!(
+            "rules_json must not exceed {MAX_RULES_JSON_BYTES} bytes"
+        ));
+    }
+    let Some(object) = value.as_object() else {
+        return bad("rules_json must be an object or null".into());
+    };
+
+    for key in object.keys() {
+        if !matches!(
+            key.as_str(),
+            "engine" | "tagline" | "description" | "rules" | "accent" | "board" | "win_length"
+                | "gravity"
+        ) {
+            return bad(format!("rules_json has an unknown field '{key}'"));
+        }
+    }
+
+    if let Some(engine) = object.get("engine") {
+        let Some(engine) = engine.as_str() else {
+            return bad("rules_json.engine must be a string".into());
+        };
+        if !GAME_ENGINES.contains(&engine) {
+            return bad(format!(
+                "rules_json.engine '{engine}' is not one of {}",
+                GAME_ENGINES.join(", ")
+            ));
+        }
+    }
+
+    let effective_engine = game_engine(game_name, Some(value));
+    let mut largest_side = {
+        // Ohne eigenes Brett gelten die Maße der Engine-Vorlage; so kann eine
+        // Gewinnlänge nicht größer sein als das tatsächliche Standardbrett.
+        let grid = grid_rules(&effective_engine, Some(value));
+        grid.rows.max(grid.cols) as u64
+    };
+    if let Some(board) = object.get("board") {
+        if !board.is_null() {
+            let Some(board) = board.as_object() else {
+                return bad("rules_json.board must be an object or null".into());
+            };
+            for key in board.keys() {
+                if !matches!(key.as_str(), "rows" | "cols") {
+                    return bad(format!("rules_json.board has an unknown field '{key}'"));
+                }
+            }
+            let rows = board
+                .get("rows")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| ApiError::BadRequest("rules_json.board.rows is missing".into()))?;
+            let cols = board
+                .get("cols")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| ApiError::BadRequest("rules_json.board.cols is missing".into()))?;
+            for (label, size) in [("rows", rows), ("cols", cols)] {
+                if !(MIN_BOARD_SIZE..=MAX_BOARD_SIZE).contains(&size) {
+                    return bad(format!(
+                        "rules_json.board.{label} must be between {MIN_BOARD_SIZE} and {MAX_BOARD_SIZE}"
+                    ));
+                }
+            }
+            largest_side = rows.max(cols);
+        }
+    }
+
+    if let Some(win_length) = object.get("win_length") {
+        let Some(win_length) = win_length.as_u64() else {
+            return bad("rules_json.win_length must be a number".into());
+        };
+        if !(MIN_BOARD_SIZE..=MAX_BOARD_SIZE).contains(&win_length) {
+            return bad(format!(
+                "rules_json.win_length must be between {MIN_BOARD_SIZE} and {MAX_BOARD_SIZE}"
+            ));
+        }
+        if win_length > largest_side {
+            return bad("rules_json.win_length must fit on the board".into());
+        }
+    }
+
+    if let Some(gravity) = object.get("gravity") {
+        if !gravity.is_boolean() {
+            return bad("rules_json.gravity must be true or false".into());
+        }
+    }
+
+    for (key, max) in [("tagline", 160usize), ("description", 600usize)] {
+        if let Some(text) = object.get(key) {
+            let Some(text) = text.as_str() else {
+                return bad(format!("rules_json.{key} must be a string"));
+            };
+            if text.chars().count() > max {
+                return bad(format!("rules_json.{key} must not exceed {max} characters"));
+            }
+        }
+    }
+
+    if let Some(rules) = object.get("rules") {
+        let Some(rules) = rules.as_array() else {
+            return bad("rules_json.rules must be an array".into());
+        };
+        if rules.len() > 20 {
+            return bad("rules_json.rules must not contain more than 20 entries".into());
+        }
+        for rule in rules {
+            let Some(rule) = rule.as_str() else {
+                return bad("rules_json.rules must only contain strings".into());
+            };
+            if rule.chars().count() > 240 {
+                return bad("a rule must not exceed 240 characters".into());
+            }
+        }
+    }
+
+    if let Some(accent) = object.get("accent") {
+        let Some(accent) = accent.as_str() else {
+            return bad("rules_json.accent must be a string".into());
+        };
+        if !GAME_ACCENTS.contains(&accent) {
+            return bad(format!(
+                "rules_json.accent '{accent}' is not one of {}",
+                GAME_ACCENTS.join(", ")
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Technische Kennung eines Spiels: sie steht im Pfad (`/games/:name`) und in
+/// `game_types.name`, deshalb nur Kleinbuchstaben, Ziffern und einzelne
+/// Bindestriche. Grossschreibung wird stillschweigend vereinheitlicht.
+fn normalise_game_name(raw: &str) -> Result<String, ApiError> {
+    let name = raw.trim().to_ascii_lowercase();
+    if name.is_empty() {
+        return bad("game name is required".into());
+    }
+    if name.chars().count() > 64 {
+        return bad("game name must not exceed 64 characters".into());
+    }
+    let allowed = name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !allowed || name.starts_with('-') || name.ends_with('-') || name.contains("--") {
+        return bad(
+            "game name may only contain lowercase letters, digits and single hyphens".into(),
+        );
+    }
+    Ok(name)
+}
+
+async fn fetch_game_type(pool: &MySqlPool, id: u64) -> Result<GameType, ApiError> {
+    sqlx::query_as::<_, GameType>(
+        "SELECT id, name, display_name, max_players, rules_json FROM game_types WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .map_err(internal)?
+    .ok_or_else(|| ApiError::NotFound(format!("no game type with id {id}")))
+}
+
+/// Legt ein Spiel im Katalog an (nur Admin). Regeln und Vorschau bleiben im
+/// Frontend; hier entsteht der technische Eintrag, unter dem Ergebnisse
+/// gespeichert werden.
+pub async fn create_game_type(
+    State(pool): State<MySqlPool>,
+    user: CurrentUser,
+    payload: Result<Json<CreateGameTypeDto>, JsonRejection>,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    user.require_admin()?;
+    let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+
+    let name = normalise_game_name(&dto.name)?;
+    let display_name = dto.display_name.trim();
+    if display_name.is_empty() {
+        return bad("display name is required".into());
+    }
+    if display_name.chars().count() > 128 {
+        return bad("display name must not exceed 128 characters".into());
+    }
+    if !(MIN_GAME_PLAYERS..=MAX_GAME_PLAYERS).contains(&dto.max_players) {
+        return bad(format!(
+            "max_players must be between {MIN_GAME_PLAYERS} and {MAX_GAME_PLAYERS}"
+        ));
+    }
+    if let Some(rules) = &dto.rules_json {
+        validate_rules_json(&name, rules)?;
+    }
+
+    let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM game_types WHERE name = ?")
+        .bind(&name)
+        .fetch_one(&pool)
+        .await
+        .map_err(internal)?;
+    if exists > 0 {
+        return Err(ApiError::Conflict(format!(
+            "game type '{name}' already exists"
+        )));
+    }
+
+    let insert = sqlx::query(
+        "INSERT INTO game_types (name, display_name, max_players, rules_json) VALUES (?, ?, ?, ?)",
+    )
+    .bind(&name)
+    .bind(display_name)
+    .bind(dto.max_players)
+    .bind(dto.rules_json)
+    .execute(&pool)
+    .await
+    .map_err(internal)?;
+
+    let game = fetch_game_type(&pool, insert.last_insert_id()).await?;
+    Ok((StatusCode::CREATED, Json(json!(game))))
+}
+
+/// Aendert Anzeige, Spielerzahl oder Spiellogik eines Katalogeintrags (nur
+/// Admin). Die technische Kennung bleibt unveraendert, weil Sitzungen und
+/// Verlaeufe darauf verweisen.
+pub async fn update_game_type(
+    State(pool): State<MySqlPool>,
+    user: CurrentUser,
+    id: Result<Path<String>, PathRejection>,
+    payload: Result<Json<UpdateGameTypeDto>, JsonRejection>,
+) -> Result<Json<Value>, ApiError> {
+    user.require_admin()?;
+    let id = path_id(id)?;
+    let game = fetch_game_type(&pool, id).await?;
+    let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
+
+    let display_name = match dto.display_name {
+        Some(display_name) => {
+            let display_name = display_name.trim().to_string();
+            if display_name.is_empty() {
+                return bad("display name is required".into());
+            }
+            if display_name.chars().count() > 128 {
+                return bad("display name must not exceed 128 characters".into());
+            }
+            display_name
+        }
+        None => game.display_name,
+    };
+
+    let max_players = match dto.max_players {
+        Some(max_players) => {
+            if !(MIN_GAME_PLAYERS..=MAX_GAME_PLAYERS).contains(&max_players) {
+                return bad(format!(
+                    "max_players must be between {MIN_GAME_PLAYERS} and {MAX_GAME_PLAYERS}"
+                ));
+            }
+            max_players
+        }
+        None => game.max_players as u16,
+    };
+
+    let rules_json = match dto.rules_json {
+        Some(Some(rules)) => {
+            validate_rules_json(&game.name, &rules)?;
+            Some(rules)
+        }
+        Some(None) => None,
+        None => game.rules_json,
+    };
+
+    sqlx::query(
+        "UPDATE game_types SET display_name = ?, max_players = ?, rules_json = ? WHERE id = ?",
+    )
+    .bind(display_name)
+    .bind(max_players)
+    .bind(rules_json)
+    .bind(id)
+    .execute(&pool)
+    .await
+    .map_err(internal)?;
+
+    Ok(Json(json!(fetch_game_type(&pool, id).await?)))
+}
+
+/// Entfernt ein Spiel aus dem Katalog (nur Admin).
+///
+/// Sitzungen und Verlaeufe bleiben bewusst erhalten: `game_sessions` verweist
+/// ohne `ON DELETE` auf `game_types`. Solange eine Partie zu dem Spiel
+/// existiert, antwortet die Route mit 409 statt die Historie zu loeschen.
+pub async fn delete_game_type(
+    State(pool): State<MySqlPool>,
+    user: CurrentUser,
+    id: Result<Path<String>, PathRejection>,
+) -> Result<Json<Value>, ApiError> {
+    user.require_admin()?;
+    let id = path_id(id)?;
+    let game = fetch_game_type(&pool, id).await?;
+
+    let sessions = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM game_sessions WHERE game_type_id = ?",
+    )
+    .bind(id)
+    .fetch_one(&pool)
+    .await
+    .map_err(internal)?;
+    if sessions > 0 {
+        return Err(ApiError::Conflict(format!(
+            "game type '{}' still has {sessions} session(s); delete those sessions first",
+            game.name
+        )));
+    }
+
+    let deleted = sqlx::query("DELETE FROM game_types WHERE id = ?")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .map_err(internal)?;
+    Ok(Json(json!({ "deleted": deleted.rows_affected() })))
 }
 
 /* ------------------------------------------------------------------- Ratings */
@@ -1996,9 +2370,12 @@ pub async fn record_board_game(
     user.require_play()?;
 
     let game_type_id = game_type_id(&pool, &game_name).await?;
+    let game = fetch_game_type(&pool, game_type_id as u64).await?;
+    let engine = game_engine(&game_name, game.rules_json.as_ref());
+    let grid = grid_rules(&engine, game.rules_json.as_ref());
     let (outcome, winner) = outcome_of(&dto.winner)?;
 
-    validate_board_moves(&game_name, &dto.moves, outcome, winner)?;
+    validate_board_moves_for(&engine, &grid, &dto.moves, outcome, winner)?;
 
     let prepared: Vec<PreparedMove> = dto
         .moves
@@ -3026,8 +3403,193 @@ fn payload_pair(m: &BoardMoveDto, key: &str) -> Option<(i64, i64)> {
     Some((pair[0].as_i64()?, pair[1].as_i64()?))
 }
 
+/// Brettparameter einer Raster-Vorlage. `win_length` zaehlt zusammenhaengende
+/// Felder, `gravity` laesst Steine in die unterste freie Zeile fallen.
+#[derive(Clone, Copy)]
+struct GridRules {
+    rows: i64,
+    cols: i64,
+    win_length: i64,
+    gravity: bool,
+}
+
+/// Engine eines Spiels: aus `rules_json.engine`, sonst aus dem fest
+/// eingebauten Namen. So bleiben alte Kataloge ohne Regeln unveraendert.
+fn game_engine(game_name: &str, rules: Option<&Value>) -> String {
+    rules
+        .and_then(|rules| rules.get("engine"))
+        .and_then(Value::as_str)
+        .unwrap_or_else(|| match game_name {
+            "tictactoe" => "grid",
+            "memory" => "memory",
+            "schach" => "chess",
+            "mensch-aergere-dich-nicht" => "mensch",
+            "connect-four" => "connect-four",
+            _ => "grid",
+        })
+        .to_string()
+}
+
+fn grid_rules(engine: &str, rules: Option<&Value>) -> GridRules {
+    let (default_rows, default_cols, default_win, default_gravity) = match engine {
+        "connect-four" => (6, 7, 4, true),
+        "memory" => (4, 4, 3, false),
+        "chess" => (8, 8, 3, false),
+        _ => (3, 3, 3, false),
+    };
+    let mut grid = GridRules {
+        rows: default_rows,
+        cols: default_cols,
+        win_length: default_win,
+        gravity: default_gravity,
+    };
+
+    let Some(rules) = rules else {
+        return grid;
+    };
+    if let Some(board) = rules.get("board").and_then(Value::as_object) {
+        if let Some(rows) = board.get("rows").and_then(Value::as_u64) {
+            grid.rows = rows as i64;
+        }
+        if let Some(cols) = board.get("cols").and_then(Value::as_u64) {
+            grid.cols = cols as i64;
+        }
+    }
+    if let Some(win_length) = rules.get("win_length").and_then(Value::as_u64) {
+        grid.win_length = win_length as i64;
+    }
+    if let Some(gravity) = rules.get("gravity").and_then(Value::as_bool) {
+        grid.gravity = gravity;
+    }
+    grid
+}
+
+/// Prueft einen Zugverlauf gegen eine konfigurierbare Raster-Engine.
+fn validate_grid(
+    rules: &GridRules,
+    moves: &[BoardMoveDto],
+    outcome: &str,
+    winner: Option<&str>,
+) -> Result<(), ApiError> {
+    let cells = (rules.rows * rules.cols) as usize;
+    let mut board = vec![None::<usize>; cells];
+    let mut winning_move: Option<usize> = None;
+
+    for (i, m) in moves.iter().enumerate() {
+        if winning_move.is_some() {
+            return bad(format!("moves[{i}] comes after the game was already won"));
+        }
+        let expected = if i % 2 == 0 { 0 } else { 1 };
+        if side_index(&m.player) != Some(expected) {
+            return bad(format!("moves[{i}]: '{}' is not the side to move", m.player));
+        }
+
+        let index = if rules.gravity {
+            let col = payload_i64(m, "col")
+                .or_else(|| m.location.as_ref().map(|l| l.x))
+                .ok_or_else(|| ApiError::BadRequest(format!("moves[{i}] has no column")))?;
+            if !(0..rules.cols).contains(&col) {
+                return bad(format!("moves[{i}].col is outside the board"));
+            }
+            let row = (0..rules.rows)
+                .rev()
+                .find(|row| board[(row * rules.cols + col) as usize].is_none());
+            let Some(row) = row else {
+                return bad(format!("moves[{i}]: column {col} is full"));
+            };
+            (row * rules.cols + col) as usize
+        } else {
+            let cell = payload_i64(m, "cell")
+                .or_else(|| m.location.as_ref().map(|l| l.y * rules.cols + l.x))
+                .ok_or_else(|| ApiError::BadRequest(format!("moves[{i}] has no cell")))?;
+            if !(0..cells as i64).contains(&cell) {
+                return bad(format!("moves[{i}].cell is outside the board"));
+            }
+            cell as usize
+        };
+
+        if board[index].is_some() {
+            return bad(format!("moves[{i}]: cell {index} is already taken"));
+        }
+
+        board[index] = Some(expected);
+        if grid_line(&board, rules, index, expected) {
+            winning_move = Some(i);
+        }
+    }
+
+    let last = moves.len() - 1;
+    match outcome {
+        "win" => {
+            if winning_move != Some(last) {
+                return bad(format!(
+                    "the last move does not complete {} in a row",
+                    rules.win_length
+                ));
+            }
+            if side_index(&moves[last].player).map(|side| SIDES[side]) != winner {
+                return bad("the winner must be the side that played the last move".into());
+            }
+        }
+        "draw" => {
+            if winning_move.is_some() {
+                return bad("a game with a completed line is not a draw".into());
+            }
+            if board.iter().any(Option::is_none) {
+                return bad("a draw needs a full board".into());
+            }
+        }
+        _ => {
+            if winning_move.is_some() {
+                return bad("a game that was won cannot be aborted".into());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Zaehlt ab dem zuletzt gesetzten Feld in alle vier Richtungen.
+fn grid_line(board: &[Option<usize>], rules: &GridRules, index: usize, side: usize) -> bool {
+    let row = index as i64 / rules.cols;
+    let col = index as i64 % rules.cols;
+    const DIRECTIONS: [(i64, i64); 4] = [(0, 1), (1, 0), (1, 1), (1, -1)];
+
+    DIRECTIONS.iter().any(|(dr, dc)| {
+        let mut count = 1;
+        for sign in [1, -1] {
+            let mut r = row + dr * sign;
+            let mut c = col + dc * sign;
+            while r >= 0 && r < rules.rows && c >= 0 && c < rules.cols {
+                let cell = board[(r * rules.cols + c) as usize];
+                if cell != Some(side) {
+                    break;
+                }
+                count += 1;
+                r += dr * sign;
+                c += dc * sign;
+            }
+        }
+        count >= rules.win_length
+    })
+}
+
+/// Kompatibilitaets-Huelle fuer die fest eingebauten Spiele und die Tests.
+#[cfg_attr(not(test), allow(dead_code))]
 fn validate_board_moves(
     game_name: &str,
+    moves: &[BoardMoveDto],
+    outcome: &str,
+    winner: Option<&str>,
+) -> Result<(), ApiError> {
+    let engine = game_engine(game_name, None);
+    let grid = grid_rules(&engine, None);
+    validate_board_moves_for(&engine, &grid, moves, outcome, winner)
+}
+
+fn validate_board_moves_for(
+    engine: &str,
+    grid: &GridRules,
     moves: &[BoardMoveDto],
     outcome: &str,
     winner: Option<&str>,
@@ -3054,91 +3616,13 @@ fn validate_board_moves(
         }
     }
 
-    match game_name {
-        "tictactoe" => validate_tictactoe(moves, outcome, winner),
+    match engine {
+        "grid" | "connect-four" => validate_grid(grid, moves, outcome, winner),
         "memory" => validate_memory(moves, outcome, winner),
-        "schach" => validate_coordinate_game(moves, 8, outcome, winner),
-        "mensch-aergere-dich-nicht" => validate_mensch(moves, outcome, winner),
-        other => bad(format!("no validator for game type '{other}'")),
+        "chess" => validate_coordinate_game(moves, 8, outcome, winner),
+        "mensch" => validate_mensch(moves, outcome, winner),
+        other => bad(format!("no validator for game engine '{other}'")),
     }
-}
-
-fn validate_tictactoe(
-    moves: &[BoardMoveDto],
-    outcome: &str,
-    winner: Option<&str>,
-) -> Result<(), ApiError> {
-    let mut board = [None::<usize>; 9];
-    let mut winning_move: Option<usize> = None;
-
-    for (i, m) in moves.iter().enumerate() {
-        if winning_move.is_some() {
-            return bad(format!("moves[{i}] comes after the game was already won"));
-        }
-        let expected = if i % 2 == 0 { 0 } else { 1 };
-        if side_index(&m.player) != Some(expected) {
-            return bad(format!("moves[{i}]: '{}' is not the side to move", m.player));
-        }
-
-        let cell = payload_i64(m, "cell")
-            .or_else(|| m.location.as_ref().map(|l| l.y * 3 + l.x))
-            .ok_or_else(|| ApiError::BadRequest(format!("moves[{i}] has no cell")))?;
-        if !(0..9).contains(&cell) {
-            return bad(format!("moves[{i}].cell is outside the board"));
-        }
-        let cell = cell as usize;
-        if board[cell].is_some() {
-            return bad(format!("moves[{i}]: cell {cell} is already taken"));
-        }
-
-        board[cell] = Some(expected);
-        if tictactoe_line(&board, expected) {
-            winning_move = Some(i);
-        }
-    }
-
-    let last = moves.len() - 1;
-    match outcome {
-        "win" => {
-            if winning_move != Some(last) {
-                return bad("the last move does not complete three in a row".into());
-            }
-            if side_index(&moves[last].player).map(|side| SIDES[side]) != winner {
-                return bad("the winner must be the side that played the last move".into());
-            }
-        }
-        "draw" => {
-            if winning_move.is_some() {
-                return bad("a game with three in a row is not a draw".into());
-            }
-            if moves.len() != 9 {
-                return bad("a draw needs a full board".into());
-            }
-        }
-        _ => {
-            if winning_move.is_some() {
-                return bad("a game that was won cannot be aborted".into());
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn tictactoe_line(board: &[Option<usize>; 9], side: usize) -> bool {
-    const LINES: [[usize; 3]; 8] = [
-        [0, 1, 2],
-        [3, 4, 5],
-        [6, 7, 8],
-        [0, 3, 6],
-        [1, 4, 7],
-        [2, 5, 8],
-        [0, 4, 8],
-        [2, 4, 6],
-    ];
-    LINES
-        .iter()
-        .any(|line| line.iter().all(|&cell| board[cell] == Some(side)))
 }
 
 /// Memory: jeder Flip ist ein Zug. Bei einem Paar bleibt dieselbe Person am
@@ -3429,6 +3913,19 @@ mod tests {
     }
 
     #[test]
+    fn normalises_a_game_name() {
+        assert_eq!(normalise_game_name("  Backgammon  ").unwrap(), "backgammon");
+        assert_eq!(normalise_game_name("Mensch-Aergere").unwrap(), "mensch-aergere");
+    }
+
+    #[test]
+    fn rejects_invalid_game_names() {
+        for raw in ["", "-start", "end-", "two--hyphens", "with space", "sonder/zeichen"] {
+            assert!(normalise_game_name(raw).is_err(), "{raw:?} sollte abgelehnt werden");
+        }
+    }
+
+    #[test]
     fn accepts_a_real_vertical_win() {
         assert!(validate_moves(&red_vertical_win(), "win", Some("red")).is_ok());
     }
@@ -3702,5 +4199,117 @@ mod tests {
         assert!(
             validate_board_moves("mensch-aergere-dich-nicht", &moves, "draw", None).is_err()
         );
+    }
+
+    #[test]
+    fn accepts_a_valid_rules_configuration() {
+        let rules = json!({
+            "engine": "connect-four",
+            "tagline": "9×10 · fünf in einer Reihe",
+            "description": "Große Variante.",
+            "rules": ["Fünf in einer Reihe gewinnt"],
+            "accent": "teal",
+            "board": { "rows": 10, "cols": 9 },
+            "win_length": 5,
+            "gravity": true
+        });
+        assert!(validate_rules_json("test-raster", &rules).is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_rules_fields_and_bad_sizes() {
+        for rules in [
+            json!({ "engine": "schach" }),
+            json!({ "engine": "unbekannt" }),
+            json!({ "board": { "rows": 2, "cols": 3 } }),
+            json!({ "board": { "rows": 5, "cols": 5 }, "win_length": 6 }),
+            json!({ "gravity": "ja" }),
+            json!({ "rules": "keine Liste" }),
+            json!({ "accent": "neon" }),
+            json!({ "beliebig": true }),
+        ] {
+            assert!(
+                validate_rules_json("test-raster", &rules).is_err(),
+                "{rules} sollte abgelehnt werden"
+            );
+        }
+    }
+
+    #[test]
+    fn update_dto_distinguishes_missing_and_null_rules() {
+        let missing: UpdateGameTypeDto =
+            serde_json::from_value(json!({ "display_name": "X" })).unwrap();
+        assert!(missing.rules_json.is_none());
+
+        let cleared: UpdateGameTypeDto =
+            serde_json::from_value(json!({ "rules_json": null })).unwrap();
+        assert!(matches!(cleared.rules_json, Some(None)));
+
+        let set: UpdateGameTypeDto =
+            serde_json::from_value(json!({ "rules_json": { "engine": "grid" } })).unwrap();
+        assert!(matches!(set.rules_json, Some(Some(_))));
+    }
+
+    #[test]
+    fn rejects_a_win_length_larger_than_the_default_board() {
+        // Ohne eigenes Brett bleibt es beim 3×3-Raster der `grid`-Vorlage.
+        assert!(
+            validate_rules_json("test-raster", &json!({ "engine": "grid", "win_length": 4 }))
+                .is_err()
+        );
+        // Die eingebaute Vier-Gewinnt-Vorlage ist 6×7, fünf in einer Reihe passen.
+        assert!(
+            validate_rules_json("connect-four", &json!({ "win_length": 5 })).is_ok()
+        );
+    }
+
+    #[test]
+    fn validates_a_custom_grid_win() {
+        let moves = vec![
+            board_mv(1, "red", json!({ "cell": 0 })),
+            board_mv(2, "yellow", json!({ "cell": 10 })),
+            board_mv(3, "red", json!({ "cell": 1 })),
+            board_mv(4, "yellow", json!({ "cell": 11 })),
+            board_mv(5, "red", json!({ "cell": 2 })),
+            board_mv(6, "yellow", json!({ "cell": 12 })),
+            board_mv(7, "red", json!({ "cell": 3 })),
+        ];
+        let rules = GridRules {
+            rows: 5,
+            cols: 5,
+            win_length: 4,
+            gravity: false,
+        };
+        assert!(validate_grid(&rules, &moves, "win", Some("red")).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_cell_outside_a_custom_grid() {
+        let moves = vec![board_mv(1, "red", json!({ "cell": 25 }))];
+        let rules = GridRules {
+            rows: 5,
+            cols: 5,
+            win_length: 4,
+            gravity: false,
+        };
+        assert!(validate_grid(&rules, &moves, "aborted", None).is_err());
+    }
+
+    #[test]
+    fn validates_gravity_on_a_custom_grid() {
+        let moves = vec![
+            board_mv(1, "red", json!({ "col": 0 })),
+            board_mv(2, "yellow", json!({ "col": 1 })),
+            board_mv(3, "red", json!({ "col": 0 })),
+            board_mv(4, "yellow", json!({ "col": 1 })),
+            board_mv(5, "red", json!({ "col": 0 })),
+        ];
+        let rules = GridRules {
+            rows: 4,
+            cols: 4,
+            win_length: 3,
+            gravity: true,
+        };
+        assert!(validate_grid(&rules, &moves, "win", Some("red")).is_ok());
     }
 }

@@ -56,6 +56,73 @@
   margin-left: 0.6rem;
 }
 
+/* ------------------------------------------------- Konfigurierbares Raster */
+
+.grid-board {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 3), 1fr);
+  gap: 6px;
+  width: min(32rem, 88vw);
+  padding: 8px;
+  border-radius: var(--radius-lg);
+  background: var(--surface-3);
+  box-shadow: var(--shadow-sm);
+}
+
+.grid-board--gravity {
+  background: color-mix(in srgb, var(--accent) 20%, var(--surface-3));
+}
+
+.grid-board__cell {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: clamp(1.1rem, 7vw, 3rem);
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background var(--speed) ease,
+    border-color var(--speed) ease,
+    box-shadow var(--speed) ease;
+}
+
+.grid-board__cell:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.grid-board__cell:disabled {
+  cursor: default;
+}
+
+.grid-board__cell--red {
+  color: var(--red);
+  background: var(--red-soft);
+}
+
+.grid-board__cell--yellow {
+  color: var(--yellow);
+  background: var(--yellow-soft);
+}
+
+.grid-board--gravity .grid-board__cell--red,
+.grid-board--gravity .grid-board__cell--yellow {
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: inset 0 -4px 8px rgba(0, 0, 0, 0.22);
+}
+
+.grid-board__cell.is-last {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
 /* ------------------------------------------------------------- Tic Tac Toe */
 
 .ttt {

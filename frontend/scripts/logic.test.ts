@@ -12,7 +12,14 @@ import {
   estimateWinningOdds,
   oddsHeadline,
 } from "../src/lib/connectFourOdds.ts";
-import { GAME_TYPES, bySortOrder, findGameType } from "../src/lib/gameTypes.ts";
+import {
+  GAME_TYPES,
+  bySortOrder,
+  findGameType,
+  gameTypeFromRow,
+  mergeGameTypes,
+  usesClassicConnectFour,
+} from "../src/lib/gameTypes.ts";
 import {
   DEFAULT_RATING,
   formatRating,
@@ -30,6 +37,7 @@ import {
 } from "../src/lib/reportVisuals.ts";
 import { parseRoute, setupPath, windowPath } from "../src/router.ts";
 import {
+  canManageGames,
   canViewCamera,
   canViewLeaderboard,
   canViewReports,
@@ -98,6 +106,7 @@ describe("Router", () => {
     assert.deepEqual(parseRoute("/sessions"), { name: "sessions" });
     assert.deepEqual(parseRoute("/sessions/"), { name: "sessions" });
     assert.deepEqual(parseRoute("/reports"), { name: "reports" });
+    assert.deepEqual(parseRoute("/admin/games"), { name: "adminGames" });
     assert.deepEqual(parseRoute("/ratings"), { name: "ratings" });
     assert.deepEqual(parseRoute("/play"), { name: "play" });
     assert.deepEqual(parseRoute("/camera"), { name: "camera" });
@@ -125,6 +134,8 @@ describe("Router", () => {
     assert.deepEqual(parseRoute("/connectfour/a/b"), { name: "notFound", path: "/connectfour/a/b" });
     // Jedes spielbare Spiel hat inzwischen eine Fenster-Route.
     assert.deepEqual(parseRoute("/tictactoe/s-abc"), { name: "game", sessionId: "s-abc" });
+    // Von der Administration angelegte Spiele brauchen keine feste Liste.
+    assert.deepEqual(parseRoute("/backgammon/12"), { name: "game", sessionId: "12" });
   });
 
   it("baut Pfade für Einstellungen und Fenster", () => {
@@ -133,7 +144,9 @@ describe("Router", () => {
     assert.equal(windowPath("tictactoe", "s-a1b2c3"), "/tictactoe/s-a1b2c3");
     assert.equal(windowPath("schach", "12"), "/schach/12");
     assert.equal(windowPath("mensch-aergere-dich-nicht", "12"), "/mensch-aergere-dich-nicht/12");
-    assert.equal(windowPath("unbekannt", "12"), null);
+    // Neue Spiele verwenden ihre eigene Kennung als Fenster-Route.
+    assert.equal(windowPath("backgammon", "12"), "/backgammon/12");
+    assert.equal(windowPath("kein gültiger name", "12"), null);
   });
 });
 
@@ -174,6 +187,111 @@ describe("Spielekatalog", () => {
     for (let i = 1; i < sorted.length; i += 1) {
       assert.ok(sorted[i - 1].sortOrder < sorted[i].sortOrder, "sortOrder muss aufsteigend sein");
     }
+  });
+});
+
+describe("Katalog aus der Datenbank", () => {
+  const rows = GAME_TYPES.map((game) => ({
+    id: game.id,
+    name: game.name,
+    display_name: game.displayName,
+    max_players: game.maxPlayers,
+  }));
+
+  it("entfernt Spiele, die nicht mehr in der Datenbank stehen", () => {
+    const merged = mergeGameTypes(rows.filter((row) => row.name !== "memory"));
+    assert.equal(merged.some((game) => game.name === "memory"), false);
+  });
+
+  it("übernimmt Anzeigename und Spielerzahl aus der Datenbank", () => {
+    const merged = mergeGameTypes(
+      rows.map((row) =>
+        row.name === "connect-four"
+          ? { ...row, display_name: "Vier Gewinnt Deluxe", max_players: 4 }
+          : row,
+      ),
+    );
+    const game = merged.find((candidate) => candidate.name === "connect-four");
+    assert.ok(game);
+    assert.equal(game.displayName, "Vier Gewinnt Deluxe");
+    assert.equal(game.maxPlayers, 4);
+    assert.equal(game.implemented, true);
+  });
+
+  it("hängt neu angelegte Spiele als „in Arbeit“ hinten an", () => {
+    const merged = mergeGameTypes([
+      ...rows,
+      { id: 99, name: "backgammon", display_name: "Backgammon", max_players: 4 },
+    ]);
+    const added = merged.find((game) => game.name === "backgammon");
+    assert.ok(added);
+    assert.equal(added.displayName, "Backgammon");
+    assert.equal(added.maxPlayers, 4);
+    assert.equal(added.implemented, false);
+    assert.equal(merged[merged.length - 1].name, "backgammon");
+  });
+
+  it("macht neue Spiele mit Logik-Vorlage sofort spielbar", () => {
+    const game = gameTypeFromRow({
+      id: 100,
+      name: "vier-gewinnt-gross",
+      display_name: "Vier Gewinnt XXL",
+      max_players: 2,
+      rules_json: {
+        engine: "connect-four",
+        tagline: "9×10 · fünf in einer Reihe",
+        description: "Große Variante.",
+        rules: ["Fünf in einer Reihe gewinnt"],
+        accent: "teal",
+        board: { rows: 10, cols: 9 },
+        win_length: 5,
+        gravity: true,
+      },
+    });
+
+    assert.equal(game.implemented, true);
+    assert.equal(game.engine, "connect-four");
+    assert.deepEqual(game.board, { rows: 10, cols: 9 });
+    assert.equal(game.winLength, 5);
+    assert.equal(game.gravity, true);
+    assert.equal(game.accent, "teal");
+    assert.deepEqual(game.rules, ["Fünf in einer Reihe gewinnt"]);
+  });
+
+  it("überschreibt die Standardwerte bekannter Spiele mit rules_json", () => {
+    const game = gameTypeFromRow({
+      id: 2,
+      name: "tictactoe",
+      display_name: "Tic Tac Toe",
+      max_players: 2,
+      rules_json: {
+        engine: "grid",
+        board: { rows: 5, cols: 5 },
+        win_length: 4,
+        gravity: false,
+      },
+    });
+
+    assert.equal(game.engine, "grid");
+    assert.deepEqual(game.board, { rows: 5, cols: 5 });
+    assert.equal(game.winLength, 4);
+    assert.equal(game.implemented, true);
+  });
+
+  it("nutzt das klassische Vier-Gewinnt-Brett nur bei Standardwerten", () => {
+    const classic = gameTypeFromRow(rows[0]);
+    assert.equal(usesClassicConnectFour(classic), true);
+
+    const resized = gameTypeFromRow({
+      ...rows[0],
+      rules_json: {
+        engine: "connect-four",
+        board: { rows: 8, cols: 8 },
+        win_length: 5,
+        gravity: true,
+      },
+    });
+    assert.equal(usesClassicConnectFour(resized), false);
   });
 });
 
@@ -420,6 +538,13 @@ describe("Rollenmatrix", () => {
     assert.equal(canViewCamera("player"), false);
     assert.equal(canViewCamera("host"), true);
     assert.equal(canViewCamera("admin"), true);
+  });
+
+  it("laesst nur Admins Spiele anlegen und loeschen", () => {
+    assert.equal(canManageGames(undefined), false);
+    assert.equal(canManageGames("player"), false);
+    assert.equal(canManageGames("host"), false);
+    assert.equal(canManageGames("admin"), true);
   });
 });
 

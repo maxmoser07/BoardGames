@@ -15,6 +15,8 @@
  *   POST   /api/login, /api/register, /api/logout
  *   GET    /api/users
  *   GET    /api/games
+ *   POST   /api/games                          { name, display_name, max_players } (nur Admin)
+ *   DELETE /api/games/{id}                     (nur Admin)
  *   GET    /api/sessions
  *   POST   /api/sessions                       { gameType, hostId, players }
  *   GET    /api/sessions/{id}
@@ -57,7 +59,28 @@ import {
 } from "../types";
 import { getToken, signIn, signOut } from "./auth";
 import { validateConnectFourResult } from "./connectFour";
-import { bySortOrder, GAME_TYPES } from "./gameTypes";
+import {
+  gameTypeFromRow,
+  mergeGameTypes,
+  type GameRulesJson,
+  type GameTypeRow,
+} from "./gameTypes";
+
+export interface CreateGameTypeInput {
+  /** Technische Kennung (`game_types.name`), z. B. `backgammon`. */
+  name: string;
+  displayName: string;
+  maxPlayers: number;
+  /** Logik-Vorlage und Darstellung; ohne Angabe bleibt das Spiel „in Arbeit“. */
+  rules?: GameRulesJson;
+}
+
+export interface UpdateGameTypeInput {
+  displayName?: string;
+  maxPlayers?: number;
+  /** `null` entfernt die Logik, `undefined` lässt sie unverändert. */
+  rules?: GameRulesJson | null;
+}
 
 export interface CreateSessionInput {
   gameType: string;
@@ -91,6 +114,12 @@ export interface Api {
   logout(): Promise<void>;
   getGameTypes(): Promise<GameType[]>;
   getGameType(name: string): Promise<GameType | null>;
+  /** Legt ein Spiel im Katalog an (nur Admin). */
+  createGameType(input: CreateGameTypeInput): Promise<GameType>;
+  /** Ändert Anzeige, Spielerzahl oder Spiellogik (nur Admin). */
+  updateGameType(id: number, input: UpdateGameTypeInput): Promise<GameType>;
+  /** Entfernt ein Spiel aus dem Katalog (nur Admin). */
+  deleteGameType(id: number): Promise<void>;
   listSessions(): Promise<GameSession[]>;
   getSession(id: string): Promise<GameSession | null>;
   createSession(input: CreateSessionInput): Promise<GameSession>;
@@ -170,13 +199,6 @@ interface WireFriendOverview {
   friends: WireFriend[];
   incoming: WireFriendRequest[];
   outgoing: WireFriendRequest[];
-}
-
-interface WireGameType {
-  id: number;
-  name: string;
-  display_name: string;
-  max_players: number;
 }
 
 interface WirePlayer {
@@ -495,22 +517,49 @@ async function logout(): Promise<void> {
 
 /**
  * Die technischen Spiele kommen aus der Datenbank, der Katalog (Regeln,
- * Vorschau, Reihenfolge) aus `lib/gameTypes.ts`. Beide werden zusammengefuehrt,
- * damit Anzeige und Datenbank-Id auch dann stimmen, wenn eine Migration noch
- * nicht gelaufen ist.
+ * Vorschau, Reihenfolge) aus `lib/gameTypes.ts`. Die Datenbank bestimmt, welche
+ * Spiele es gibt: neu angelegte sind mit Engine-Vorlage sofort spielbar und
+ * erscheinen sonst als „in Arbeit“; geloeschte verschwinden sofort.
  */
 async function getGameTypes(): Promise<GameType[]> {
-  const rows = await request<WireGameType[]>("/games");
-  const byName = new Map(rows.map((row) => [row.name, row]));
-  return GAME_TYPES.map((game) => {
-    const row = byName.get(game.name);
-    return row ? { ...game, id: row.id, maxPlayers: row.max_players } : game;
-  }).sort((a, b) => bySortOrder(a, b));
+  return mergeGameTypes(await request<GameTypeRow[]>("/games"));
 }
 
 async function getGameType(name: string): Promise<GameType | null> {
   const games = await getGameTypes();
   return games.find((game) => game.name === name) ?? null;
+}
+
+async function createGameType(input: CreateGameTypeInput): Promise<GameType> {
+  const row = await request<GameTypeRow>("/games", {
+    method: "POST",
+    body: JSON.stringify({
+      name: input.name,
+      display_name: input.displayName,
+      max_players: input.maxPlayers,
+      rules_json: input.rules ?? null,
+    }),
+  });
+  notify();
+  return gameTypeFromRow(row);
+}
+
+async function updateGameType(id: number, input: UpdateGameTypeInput): Promise<GameType> {
+  const row = await request<GameTypeRow>(`/games/${encodeURIComponent(String(id))}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      ...(input.displayName === undefined ? {} : { display_name: input.displayName }),
+      ...(input.maxPlayers === undefined ? {} : { max_players: input.maxPlayers }),
+      ...(input.rules === undefined ? {} : { rules_json: input.rules }),
+    }),
+  });
+  notify();
+  return gameTypeFromRow(row);
+}
+
+async function deleteGameType(id: number): Promise<void> {
+  await request(`/games/${encodeURIComponent(String(id))}`, { method: "DELETE" });
+  notify();
 }
 
 async function listSessions(): Promise<GameSession[]> {
@@ -815,6 +864,9 @@ export const httpApi: Api = {
   logout,
   getGameTypes,
   getGameType,
+  createGameType,
+  updateGameType,
+  deleteGameType,
   listSessions,
   getSession,
   createSession,

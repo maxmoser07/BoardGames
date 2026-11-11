@@ -9,10 +9,10 @@ import { EmptyState, Notice, Skeleton } from "./components/ui";
 import { GameBoard } from "./games/GameBoard";
 import { useLiveData } from "./hooks/useLiveData";
 import { api } from "./lib/api";
-import { findGameType, GAME_TYPES } from "./lib/gameTypes";
+import { usesClassicConnectFour } from "./lib/gameTypes";
 import { installGameResultEndpoint } from "./lib/gameResultEndpoint";
 import { useNavigate } from "./router";
-import type { User } from "./types";
+import type { GameType, User } from "./types";
 
 interface Props {
   /** Fehlt auf `/play`: dann wird zuerst ein Spiel ausgewählt. */
@@ -26,9 +26,30 @@ interface Props {
  */
 const PlayView: React.FC<Props> = ({ gameName }) => {
   if (!gameName) return <GameChooser />;
+  return <PlayByName gameName={gameName} />;
+};
 
-  const game = findGameType(gameName);
-  if (!game) {
+/** Eine Partie eines bestimmten Spiels; der Katalog kommt aus der Datenbank. */
+function PlayByName({ gameName }: { gameName: string }) {
+  const game = useLiveData(() => api.getGameType(gameName));
+
+  if (game.loading) {
+    return (
+      <PlayShell title="Spiel wird geladen" subtitle={gameName}>
+        <Skeleton rows={2} />
+      </PlayShell>
+    );
+  }
+  if (game.error) {
+    return (
+      <PlayShell title="Spiel konnte nicht geladen werden" subtitle={gameName}>
+        <Notice tone="danger" title="Das Spiel ist nicht erreichbar">
+          {game.error}
+        </Notice>
+      </PlayShell>
+    );
+  }
+  if (!game.data) {
     return (
       <PlayShell title="Unbekanntes Spiel" subtitle={gameName}>
         <Notice tone="warn" title={`Unbekanntes Spiel: ${gameName}`}>
@@ -37,23 +58,24 @@ const PlayView: React.FC<Props> = ({ gameName }) => {
       </PlayShell>
     );
   }
-  if (!game.implemented) {
+  if (!game.data.implemented) {
     return (
-      <PlayShell title={game.displayName} subtitle="Noch nicht spielbar">
+      <PlayShell title={game.data.displayName} subtitle="Noch nicht spielbar">
         <Notice tone="warn" title="Noch nicht spielbar">
-          Für {game.displayName} gibt es noch kein Brett.
+          Für {game.data.displayName} gibt es noch kein Brett.
         </Notice>
       </PlayShell>
     );
   }
 
-  return <DirectPlay game={game} />;
-};
+  return <DirectPlay game={game.data} />;
+}
 
 /** Auswahl auf `/play`, wenn noch kein Spiel gewählt wurde. */
 function GameChooser() {
   const navigate = useNavigate();
-  const playable = GAME_TYPES.filter((game) => game.implemented);
+  const games = useLiveData(() => api.getGameTypes());
+  const playable = (games.data ?? []).filter((game) => game.implemented);
 
   return (
     <PlayShell title="Direkt spielen" subtitle="Partie ohne Sitzung">
@@ -62,8 +84,22 @@ function GameChooser() {
         Wirkung auf die Wertung.
       </Notice>
 
+      {games.error ? (
+        <Notice tone="danger" title="Spiele konnten nicht geladen werden">
+          {games.error}
+        </Notice>
+      ) : null}
+
+      {games.loading ? (
+        <Skeleton rows={2} />
+      ) : playable.length === 0 ? (
+        <EmptyState icon={Dices} title="Kein spielbares Spiel">
+          Der Katalog enthält derzeit kein Spiel mit einem Brett.
+        </EmptyState>
+      ) : null}
+
       <ul className="tiles">
-        {playable.map((game) => (
+        {!games.loading && playable.map((game) => (
           <li className="tile" key={game.name} data-accent={game.accent} data-playable="true">
             <button type="button" className="tile__button" onClick={() => navigate(`/play/${game.name}`)}>
               <GameArt game={game} size="md" />
@@ -90,7 +126,7 @@ function GameChooser() {
 }
 
 /** Eine Partie im Tab, inklusive der Verläufe dieses Spiels. */
-function DirectPlay({ game }: { game: NonNullable<ReturnType<typeof findGameType>> }) {
+function DirectPlay({ game }: { game: GameType }) {
   const games = useLiveData(() => api.listGames());
   const [mountedAt] = useState(() => Date.now());
   const noUsers = useMemo(() => new Map<number, User>(), []);
@@ -110,11 +146,11 @@ function DirectPlay({ game }: { game: NonNullable<ReturnType<typeof findGameType
         gespeichert, die Wertung bleibt unverändert.
       </Notice>
 
-      {game.name === "connect-four" ? (
+      {usesClassicConnectFour(game) ? (
         <DirectConnectFour startedAt={mountedAt} />
       ) : (
         <GameBoard
-          gameType={game.name}
+          game={game}
           context={{
             gameType: game.name,
             sessionId: null,

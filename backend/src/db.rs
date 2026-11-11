@@ -1,6 +1,7 @@
 use chrono::NaiveDateTime;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Zeile aus `users`, wie `GET /api/users` sie ausliefert.
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
@@ -45,14 +46,19 @@ pub struct AuthUser {
     pub locked_until: Option<chrono::NaiveDateTime>,
 }
 
-/// Zeile aus `game_types`. Regeln, Texte und Vorschaubilder stehen weiterhin im
-/// Frontend (`lib/gameTypes.ts`), die Datenbank liefert die technischen Spalten.
+/// Zeile aus `game_types`.
+///
+/// `rules_json` traegt die Spiellogik, die die Administration in der Oberflaeche
+/// bearbeitet: Engine-Vorlage, Brettgroesse, Gewinnbedingung, Texte und Farbe.
+/// Die fest eingebauten Spiele haben dort `NULL` und werden im Frontend aus
+/// `lib/gameTypes.ts` ergaenzt.
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct GameType {
     pub id: u32,
     pub name: String,
     pub display_name: String,
     pub max_players: u8,
+    pub rules_json: Option<Value>,
 }
 
 /// Sitzung aus `game_sessions`, ergaenzt um `game_types.name`.

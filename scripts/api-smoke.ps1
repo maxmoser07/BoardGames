@@ -302,6 +302,26 @@ $script:token = $adminToken
 $adminUsers = Ok (Send GET "/admin/users") "/admin/users"
 Write-Host "  Benutzer: $($adminUsers.username -join ', ')"
 
+Write-Host "`n== Spiele anlegen und loeschen =="
+# Reste eines abgebrochenen Laufs entfernen; 404 heisst nur "war nicht da".
+$beforeGames = Ok (Send GET "/games") "/games"
+$oldGame = $beforeGames | Where-Object { $_.name -eq "smoke-spiel" }
+if ($null -ne $oldGame) { Send DELETE "/games/$($oldGame.id)" | Out-Null }
+
+$createdGame = Ok (Send POST "/games" '{"name":"smoke-spiel","display_name":"Smoke-Spiel","max_players":3}') "/games anlegen"
+Write-Host "  Spiel $($createdGame.id): $($createdGame.name) / $($createdGame.display_name)"
+if ($createdGame.max_players -ne 3) { throw "Neues Spiel hat die falsche Spielerzahl" }
+Expect (Send POST "/games" '{"name":"smoke-spiel","display_name":"Doppelt","max_players":2}') "doppelte Kennung" 409
+Expect (Send POST "/games" '{"name":"Mit Leerzeichen","display_name":"Ungueltig","max_players":2}') "ungueltige Kennung" 400
+Expect (Send POST "/games" '{"name":"smoke-zu-viele","display_name":"Zu viele","max_players":99}') "zu viele Spieler" 400
+# Ein Spiel mit Partien bleibt erhalten, damit die Historie nicht verschwindet.
+$connectFour = $beforeGames | Where-Object { $_.name -eq "connect-four" }
+Expect (Send DELETE "/games/$($connectFour.id)") "Spiel mit Partien loeschen" 409
+Expect (Send DELETE "/games/$($createdGame.id)" -token $hostToken) "Host loescht Spiel" 403
+Ok (Send DELETE "/games/$($createdGame.id)") "Spiel loeschen" | Out-Null
+Expect (Send DELETE "/games/$($createdGame.id)") "Spiel zweimal loeschen" 404
+Write-Host "  Anlegen, Abweisen und Loeschen geprueft"
+
 Write-Host "`n== Ratings lesen und zuruecksetzen =="
 $allRatings = Ok (Send GET "/ratings") "/ratings"
 Write-Host "  Ratings: $(($allRatings | Measure-Object).Count) Eintraege, Top: $($allRatings[0].username) ($($allRatings[0].rating))"

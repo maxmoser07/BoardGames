@@ -1752,6 +1752,121 @@ a {
   scrollbar-width: thin;
 }
 
+.list__item {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.list__main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.list__meta {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.list__detail {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.list__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+}
+
+/* Formulare ------------------------------------------------------------------ */
+
+.form {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.game-form {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.6fr) minmax(0, 0.55fr) auto;
+  align-items: end;
+}
+
+.game-form__action {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.game-editor {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: start;
+}
+
+.game-editor__wide {
+  grid-column: 1 / -1;
+}
+
+.game-editor__check {
+  align-self: end;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  padding-bottom: 0.55rem;
+  color: var(--text-muted);
+}
+
+.game-editor__check input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent);
+}
+
+.game-editor__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.textarea {
+  min-height: 4.5rem;
+  resize: vertical;
+  line-height: 1.45;
+}
+
+@media (max-width: 860px) {
+  .game-form,
+  .game-editor {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .game-form__action,
+  .game-editor__actions {
+    justify-content: flex-start;
+  }
+
+  .game-editor__wide {
+    grid-column: auto;
+  }
+
+  .list__item {
+    flex-direction: column;
+  }
+
+  .list__actions {
+    justify-content: flex-start;
+  }
+}
+
 /* Sitzungskarte ------------------------------------------------------------------ */
 
 .session {
