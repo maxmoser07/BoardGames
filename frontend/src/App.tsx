@@ -8,6 +8,8 @@ import GamesAdminView from "./GamesAdminView";
 import GameSetup from "./GameSetup";
 import PlayView from "./PlayView";
 import RatingsView from "./RatingsView";
+import ReplaysView from "./ReplaysView";
+import ReplayView from "./ReplayView";
 import ReportsView from "./ReportsView";
 import SessionsView from "./SessionsView";
 import { useAuth } from "./lib/auth";
@@ -63,6 +65,10 @@ export const App: React.FC = () => {
       return <RatingsView />;
     case "play":
       return <PlayView key={route.gameName ?? "auswahl"} gameName={route.gameName} />;
+    case "replays":
+      return <ReplaysView />;
+    case "replay":
+      return <ReplayView key={route.gameId} gameId={route.gameId} />;
     case "camera":
       return canViewCamera(user.role) ? (
         <CameraView />
@@ -87,7 +93,8 @@ export const App: React.FC = () => {
               }
             >
               Erlaubt sind <code>/</code>, <code>/games/&lt;name&gt;</code>, <code>/play</code>,{" "}
-              <code>/play/&lt;name&gt;</code>, <code>/camera</code>, <code>/sessions</code>,{" "}
+              <code>/play/&lt;name&gt;</code>, <code>/replays</code>,{" "}
+              <code>/replays/&lt;id&gt;</code>, <code>/camera</code>, <code>/sessions</code>,{" "}
               <code>/reports</code>, <code>/admin/games</code>, <code>/ratings</code>,{" "}
               <code>/profile</code> und{" "}
               <code>/&lt;spiel&gt;/&lt;id&gt;</code>.

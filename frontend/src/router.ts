@@ -5,6 +5,8 @@
  *   /                    Spielekatalog
  *   /games/:name         Einstellungen eines Spiels
  *   /sessions            Sitzungen und Spielverläufe
+ *   /replays             Alle gespeicherten Partien nachspielen
+ *   /replays/:id         Wiedergabe einer Partie
  *   /reports             Meldungen und rollenabhängige Visualisierung
  *   /admin/games         Spiele im Katalog anlegen und löschen (Admin)
  *   /ratings             Rangliste der Spieler-Ratings
@@ -22,6 +24,8 @@ export type Route =
   | { name: "profile" }
   | { name: "setup"; gameName: string }
   | { name: "sessions" }
+  | { name: "replays" }
+  | { name: "replay"; gameId: string }
   | { name: "reports" }
   | { name: "adminGames" }
   | { name: "ratings" }
@@ -53,6 +57,7 @@ export function parseRoute(pathname: string): Route {
   if (path === "/login") return { name: "login" };
   if (path === "/profile") return { name: "profile" };
   if (path === "/sessions") return { name: "sessions" };
+  if (path === "/replays") return { name: "replays" };
   if (path === "/reports") return { name: "reports" };
   if (path === "/admin/games") return { name: "adminGames" };
   if (path === "/ratings") return { name: "ratings" };
@@ -61,6 +66,9 @@ export function parseRoute(pathname: string): Route {
 
   const direct = /^\/play\/([A-Za-z0-9_-]+)$/.exec(path);
   if (direct) return { name: "play", gameName: direct[1] };
+
+  const replay = /^\/replays\/([A-Za-z0-9_-]+)$/.exec(path);
+  if (replay) return { name: "replay", gameId: replay[1] };
 
   const setup = /^\/games\/([A-Za-z0-9_-]+)$/.exec(path);
   if (setup) return { name: "setup", gameName: setup[1] };

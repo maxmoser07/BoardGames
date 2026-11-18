@@ -12,6 +12,7 @@ import { Logo } from "./Logo";
 export type ShellSection =
   | "catalog"
   | "play"
+  | "replays"
   | "camera"
   | "sessions"
   | "reports"
@@ -28,6 +29,7 @@ interface AppShellProps {
 const NAV = [
   { path: "/", label: "Spiele", icon: LayoutGrid, match: "catalog", visible: () => true },
   { path: "/play", label: "Direkt spielen", icon: Play, match: "play", visible: () => true },
+  { path: "/replays", label: "Verläufe", icon: History, match: "replays", visible: () => true },
   {
     path: "/camera",
     label: "Kamera",

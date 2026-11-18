@@ -12,18 +12,26 @@ import {
 } from "../games/logic/mensch";
 import "../games/games.css";
 
+type PreviewSize = "sm" | "md" | "lg";
+
 interface GamePreviewProps {
   gameType: string;
   moves: GameMove[];
   /** CSS-Klasse fuer die Groesse, Standard ist die kleine Variante. */
-  size?: "sm" | "md";
+  size?: PreviewSize;
+  /** Zuletzt gezeigter Zug; wird in der Vorschau hervorgehoben. */
+  activeMove?: GameMove | null;
 }
 
 /**
  * Miniaturbrett aus einem gespeicherten Spielverlauf. Rein lesend - die
  * eigentliche Spiellogik liegt in den Modulen unter `games/logic`.
+ *
+ * Fuer die Wiedergabe bekommt `moves` einen Teil des Verlaufs; das Brett zeigt
+ * dann genau die Stellung nach dem letzten dieser Zuege. `activeMove` markiert
+ * das Feld, das zuletzt geaendert wurde.
  */
-export function GamePreview({ gameType, moves, size = "sm" }: GamePreviewProps) {
+export function GamePreview({ gameType, moves, size = "sm", activeMove = null }: GamePreviewProps) {
   const counts: Record<Side, number> = {
     red: moves.filter((move) => move.player === "red").length,
     yellow: moves.filter((move) => move.player === "yellow").length,
@@ -32,15 +40,15 @@ export function GamePreview({ gameType, moves, size = "sm" }: GamePreviewProps) 
   return (
     <div className={`mini mini--${size}`}>
       {gameType === "connect-four" ? (
-        <ConnectFourPreview moves={moves} size={size} />
+        <ConnectFourPreview moves={moves} size={size} activeMove={activeMove} />
       ) : gameType === "tictactoe" ? (
-        <TicTacToePreview moves={moves} />
+        <TicTacToePreview moves={moves} activeMove={activeMove} />
       ) : gameType === "memory" ? (
-        <MemoryPreview moves={moves} />
+        <MemoryPreview moves={moves} activeMove={activeMove} />
       ) : gameType === "schach" ? (
-        <ChessPreview moves={moves} />
+        <ChessPreview moves={moves} activeMove={activeMove} />
       ) : gameType === "mensch-aergere-dich-nicht" ? (
-        <MenschPreview moves={moves} />
+        <MenschPreview moves={moves} activeMove={activeMove} />
       ) : (
         <p className="mini__legend">Keine Vorschau</p>
       )}
@@ -57,23 +65,39 @@ export function GamePreview({ gameType, moves, size = "sm" }: GamePreviewProps) 
   );
 }
 
-function ConnectFourPreview({ moves, size }: { moves: GameMove[]; size: "sm" | "md" }) {
+function ConnectFourPreview({
+  moves,
+  size,
+  activeMove,
+}: {
+  moves: GameMove[];
+  size: PreviewSize;
+  activeMove?: GameMove | null;
+}) {
   const grid = useMemo(() => buildGrid(moves), [moves]);
   const counts: Record<Side, number> = {
     red: moves.filter((move) => move.player === "red").length,
     yellow: moves.filter((move) => move.player === "yellow").length,
   };
+  const activeLocation = activeMove?.location ?? null;
+  const active =
+    activeLocation === null ? null : `${activeLocation.x}-${activeLocation.y}`;
 
   return (
     <div className={`preview preview--${size}`}>
       <div
         className="preview__grid"
         role="img"
-        aria-label={`Spielstand nach ${moves.length} Zuegen: ${SIDE_LABEL.red} ${counts.red}, ${SIDE_LABEL.yellow} ${counts.yellow}`}
+        aria-label={`Spielstand nach ${moves.length} Zügen: ${SIDE_LABEL.red} ${counts.red}, ${SIDE_LABEL.yellow} ${counts.yellow}`}
       >
         {grid.map((row, y) =>
           row.map((cell, x) => (
-            <span key={`${x}-${y}`} className={`preview__cell${cell ? ` preview__cell--${cell}` : ""}`} />
+            <span
+              key={`${x}-${y}`}
+              className={`preview__cell${cell ? ` preview__cell--${cell}` : ""}${
+                active === `${x}-${y}` ? " is-last" : ""
+              }`}
+            />
           )),
         )}
       </div>
@@ -87,7 +111,13 @@ function ConnectFourPreview({ moves, size }: { moves: GameMove[]; size: "sm" | "
   );
 }
 
-function TicTacToePreview({ moves }: { moves: GameMove[] }) {
+function TicTacToePreview({
+  moves,
+  activeMove,
+}: {
+  moves: GameMove[];
+  activeMove?: GameMove | null;
+}) {
   const board = useMemo(() => {
     const cells: (Side | null)[] = Array.from({ length: 9 }, () => null);
     for (const move of moves) {
@@ -96,13 +126,16 @@ function TicTacToePreview({ moves }: { moves: GameMove[] }) {
     }
     return cells;
   }, [moves]);
+  const activeCell = Number(activeMove?.payload?.cell);
 
   return (
-    <div className="mini__grid mini__grid--ttt" role="img" aria-label="Tic-Tac-Toe-Endstand">
+    <div className="mini__grid mini__grid--ttt" role="img" aria-label="Tic-Tac-Toe-Spielstand">
       {board.map((cell, index) => (
         <span
           key={index}
-          className={`mini__cell${cell ? ` mini__cell--text-${cell}` : ""}`}
+          className={`mini__cell${cell ? ` mini__cell--text-${cell}` : ""}${
+            index === activeCell ? " is-last" : ""
+          }`}
         >
           {cell === "red" ? "X" : cell === "yellow" ? "O" : ""}
         </span>
@@ -111,7 +144,7 @@ function TicTacToePreview({ moves }: { moves: GameMove[] }) {
   );
 }
 
-function MemoryPreview({ moves }: { moves: GameMove[] }) {
+function MemoryPreview({ moves, activeMove }: { moves: GameMove[]; activeMove?: GameMove | null }) {
   const cards = useMemo(() => {
     const cells: (string | null)[] = Array.from(
       { length: MEMORY_COLS * MEMORY_ROWS },
@@ -131,13 +164,16 @@ function MemoryPreview({ moves }: { moves: GameMove[] }) {
     }
     return cells;
   }, [moves]);
+  const activeCard = Number(activeMove?.payload?.card);
 
   return (
-    <div className="mini__grid mini__grid--memory" role="img" aria-label="Memory-Endstand">
+    <div className="mini__grid mini__grid--memory" role="img" aria-label="Memory-Spielstand">
       {cards.map((symbol, index) => (
         <span
           key={index}
-          className={`mini__cell${symbol ? "" : " mini__cell--hidden"}`}
+          className={`mini__cell${symbol ? "" : " mini__cell--hidden"}${
+            index === activeCard ? " is-last" : ""
+          }`}
         >
           {symbol ?? "?"}
         </span>
@@ -155,11 +191,18 @@ const CHESS_LETTER: Record<ChessPieceType, string> = {
   k: "K",
 };
 
-function ChessPreview({ moves }: { moves: GameMove[] }) {
+function ChessPreview({ moves, activeMove }: { moves: GameMove[]; activeMove?: GameMove | null }) {
   const state = useMemo(() => replayChessMoves(moves), [moves]);
+  const activeSquare = useMemo(() => {
+    const to = activeMove?.payload?.to;
+    if (!Array.isArray(to) || to.length !== 2) return null;
+    const row = Number(to[0]);
+    const col = Number(to[1]);
+    return Number.isInteger(row) && Number.isInteger(col) ? row * 8 + col : null;
+  }, [activeMove]);
 
   return (
-    <div className="mini__grid mini__grid--chess" role="img" aria-label="Schach-Endstand">
+    <div className="mini__grid mini__grid--chess" role="img" aria-label="Schach-Spielstand">
       {state.board.map((piece, index) => {
         const row = Math.floor(index / 8);
         const col = index % 8;
@@ -169,7 +212,7 @@ function ChessPreview({ moves }: { moves: GameMove[] }) {
             key={index}
             className={`mini__cell${dark ? " mini__cell--dark" : ""}${
               piece ? ` mini__cell--text-${piece.color}` : ""
-            }`}
+            }${index === activeSquare ? " is-last" : ""}`}
           >
             {piece ? CHESS_LETTER[piece.type] : ""}
           </span>
@@ -179,8 +222,13 @@ function ChessPreview({ moves }: { moves: GameMove[] }) {
   );
 }
 
-function MenschPreview({ moves }: { moves: GameMove[] }) {
+function MenschPreview({ moves, activeMove }: { moves: GameMove[]; activeMove?: GameMove | null }) {
   const state = useMemo(() => replayMenschMoves(moves), [moves]);
+  const activeSquare = useMemo(() => {
+    const to = activeMove?.payload?.to;
+    if (typeof to !== "number" || !Number.isInteger(to)) return null;
+    return trackSquare(activeMove?.player ?? "red", to);
+  }, [activeMove]);
 
   const occupancy = useMemo(() => {
     const map = new Map<number, Side>();
@@ -202,7 +250,7 @@ function MenschPreview({ moves }: { moves: GameMove[] }) {
   }, []);
 
   return (
-    <div className="mini__grid mini__grid--mensch" role="img" aria-label="Mensch-aergere-dich-nicht-Endstand">
+    <div className="mini__grid mini__grid--mensch" role="img" aria-label="Mensch-ärgere-dich-nicht-Spielstand">
       {Array.from({ length: 11 * 11 }, (_, position) => {
         const row = Math.floor(position / 11);
         const col = position % 11;
@@ -214,7 +262,9 @@ function MenschPreview({ moves }: { moves: GameMove[] }) {
         return (
           <span
             key={position}
-            className={`mini__cell mini__cell--ring${side ? ` mini__cell--dot-${side}` : ""}`}
+            className={`mini__cell mini__cell--ring${side ? ` mini__cell--dot-${side}` : ""}${
+              index === activeSquare ? " is-last" : ""
+            }`}
           />
         );
       })}

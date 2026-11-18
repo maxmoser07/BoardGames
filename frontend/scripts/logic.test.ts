@@ -105,6 +105,9 @@ describe("Router", () => {
     assert.deepEqual(parseRoute(""), { name: "catalog" });
     assert.deepEqual(parseRoute("/sessions"), { name: "sessions" });
     assert.deepEqual(parseRoute("/sessions/"), { name: "sessions" });
+    assert.deepEqual(parseRoute("/replays"), { name: "replays" });
+    assert.deepEqual(parseRoute("/replays/"), { name: "replays" });
+    assert.deepEqual(parseRoute("/replays/12"), { name: "replay", gameId: "12" });
     assert.deepEqual(parseRoute("/reports"), { name: "reports" });
     assert.deepEqual(parseRoute("/admin/games"), { name: "adminGames" });
     assert.deepEqual(parseRoute("/ratings"), { name: "ratings" });
@@ -132,6 +135,7 @@ describe("Router", () => {
     assert.deepEqual(parseRoute("/games/a/b"), { name: "notFound", path: "/games/a/b" });
     assert.deepEqual(parseRoute("/connectfour/"), { name: "notFound", path: "/connectfour" });
     assert.deepEqual(parseRoute("/connectfour/a/b"), { name: "notFound", path: "/connectfour/a/b" });
+    assert.deepEqual(parseRoute("/replays/1/2"), { name: "notFound", path: "/replays/1/2" });
     // Jedes spielbare Spiel hat inzwischen eine Fenster-Route.
     assert.deepEqual(parseRoute("/tictactoe/s-abc"), { name: "game", sessionId: "s-abc" });
     // Von der Administration angelegte Spiele brauchen keine feste Liste.

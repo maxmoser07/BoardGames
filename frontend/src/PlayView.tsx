@@ -127,6 +127,7 @@ function GameChooser() {
 
 /** Eine Partie im Tab, inklusive der Verläufe dieses Spiels. */
 function DirectPlay({ game }: { game: GameType }) {
+  const navigate = useNavigate();
   const games = useLiveData(() => api.listGames());
   const [mountedAt] = useState(() => Date.now());
   const noUsers = useMemo(() => new Map<number, User>(), []);
@@ -184,7 +185,13 @@ function DirectPlay({ game }: { game: GameType }) {
         ) : localGames.length > 0 ? (
           <ul className="list list--games">
             {localGames.map((recorded) => (
-              <GameCard key={recorded.id} game={recorded} session={undefined} users={noUsers} />
+              <GameCard
+                key={recorded.id}
+                game={recorded}
+                session={undefined}
+                users={noUsers}
+                onReplay={(game) => navigate(`/replays/${game.id}`)}
+              />
             ))}
           </ul>
         ) : (

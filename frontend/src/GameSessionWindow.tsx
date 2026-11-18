@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Ban, Flag, Handshake, LayoutGrid, Pause, Play, RotateCcw, Trophy } from "lucide-react";
+import { Ban, Flag, Handshake, History, LayoutGrid, Pause, Play, RotateCcw, Trophy } from "lucide-react";
 
 import ConnectFourGame from "./ConnectFourGame";
 import { GameBoard } from "./games/GameBoard";
@@ -374,6 +374,7 @@ function SessionBody({ session, gameType, users, role, userId }: SessionBodyProp
           busy={busy}
           canRematch={canManage}
           onRematch={handleRematch}
+          onReplay={game ? () => navigate(`/replays/${game.id}`) : undefined}
           onBack={() => navigate("/")}
         />
       )}
@@ -389,10 +390,21 @@ interface ResultPanelProps {
   busy: boolean;
   canRematch: boolean;
   onRematch: () => void;
+  onReplay?: () => void;
   onBack: () => void;
 }
 
-function ResultPanel({ session, game, users, elapsed, busy, canRematch, onRematch, onBack }: ResultPanelProps) {
+function ResultPanel({
+  session,
+  game,
+  users,
+  elapsed,
+  busy,
+  canRematch,
+  onRematch,
+  onReplay,
+  onBack,
+}: ResultPanelProps) {
   return (
     <section className="result" aria-label="Ergebnis">
       <p className="result__headline">
@@ -435,6 +447,12 @@ function ResultPanel({ session, game, users, elapsed, busy, canRematch, onRematc
           <button type="button" className="btn btn--primary btn--sm" onClick={onRematch} disabled={busy}>
             <RotateCcw aria-hidden="true" size={15} />
             Neue Partie
+          </button>
+        ) : null}
+        {onReplay ? (
+          <button type="button" className="btn btn--ghost btn--sm" onClick={onReplay}>
+            <History aria-hidden="true" size={15} />
+            Verlauf nachspielen
           </button>
         ) : null}
         <button type="button" className="btn btn--ghost btn--sm" onClick={onBack}>

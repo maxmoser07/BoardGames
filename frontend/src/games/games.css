@@ -478,6 +478,22 @@
   width: 13rem;
 }
 
+.mini--lg .mini__grid {
+  width: min(22rem, 82vw);
+  gap: 2px;
+  padding: 5px;
+  border-radius: 12px;
+}
+
+.mini--lg .mini__cell {
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+.mini--lg .mini__legend {
+  font-size: 0.8rem;
+}
+
 .mini__grid--ttt {
   grid-template-columns: repeat(3, 1fr);
   aspect-ratio: 1;
@@ -551,6 +567,10 @@
 
 .mini__cell--dot-yellow {
   background: radial-gradient(circle, var(--yellow) 0 42%, transparent 44%);
+}
+
+.mini__cell.is-last {
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 .mini__legend {

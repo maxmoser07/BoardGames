@@ -9,7 +9,8 @@ Dazu kommen eine Webcam-Erkennung für ein physisches Brett samt Live-Feedback
 zur Erkennungsqualität und Zuganalyse, Freundschaftsanfragen im Profil und eine
 rollenabhängige Oberfläche: Spieler:innen sehen ihr eigenes Rating, Hosts
 zusätzlich Sitzungen, Kamera und Rangliste, Admins zusätzlich Meldungen,
-Ratings, Benutzer- und Spieleverwaltung.
+Ratings, Benutzer- und Spieleverwaltung. Gespeicherte Partien lassen sich unter
+`/replays` von allen Rollen Zug für Zug nachspielen.
 
 Dieses README ist die einzige Projektdokumentation und beschreibt Backend,
 Frontend, Betrieb, API und Tests.
@@ -269,6 +270,7 @@ ohnehin verboten wäre.
 | Pause/Fortsetzen/Beenden                 | nein          | eigene Sitzung   | alle Sitzungen    |
 | Aufgeben                                 | eigener Platz | eigener Platz    | eigener/erzwungen |
 | Sitzungsübersicht `/sessions`            | nein          | ja               | ja                |
+| Verläufe nachspielen `/replays`          | ja            | ja               | ja                |
 | Kamera-/Brettverfolgung `/camera`        | nein          | ja               | ja                |
 | Rangliste `/ratings`                     | eigenes Rating | Rangliste       | Rangliste         |
 | Meldungs-Visualisierung `/reports`       | nein          | nein             | ja                |
@@ -288,7 +290,7 @@ einmal im Backend (`backend/src/api.rs`).
 
 | Rolle  | Navigation                                      | Darf                                                          |
 | ------ | ----------------------------------------------- | ------------------------------------------------------------- |
-| player | Spiele, Direkt spielen, Mein Rating, Profil     | spielen und das eigene Rating sehen                            |
+| player | Spiele, Direkt spielen, Verläufe, Mein Rating, Profil | spielen, Verläufe nachspielen und das eigene Rating sehen |
 | host   | zusätzlich Sitzungen, Kamera, Rangliste         | eigene Sitzungen anlegen, pausieren, fortsetzen, beenden       |
 | admin  | zusätzlich Meldungs- und Spieleverwaltung        | alles, auch fremde Sitzungen, Ratings, Meldungen, Benutzer und den Spielekatalog |
 
@@ -316,7 +318,7 @@ npm run dev        # http://localhost:5173
 npm run build      # tsc -b && vite build -> frontend/dist/
 npm run preview    # Produktionsbuild lokal ausliefern
 npm run lint       # eslint (inkl. React-Compiler-Regeln)
-npm test           # Router, Spiellogik, Ableitungen, Kamera-Feedback und Ergebnis-Prüfung (Node)
+npm test           # Router, Spiellogik, Ableitungen, Wiedergabe, Kamera-Feedback und Ergebnis-Prüfung (Node)
 ```
 
 Voraussetzung ist ein laufendes Backend: Sitzungen, Verläufe und Personen liegen
@@ -350,6 +352,8 @@ frontend/src/
   Catalog.tsx              Spielekatalog unter /
   GameSetup.tsx            Einstellungen unter /games/:name; für player nur der Spielstart
   SessionsView.tsx         Sitzungen und Verläufe unter /sessions (host/admin)
+  ReplaysView.tsx          gespeicherte Partien unter /replays (alle Rollen)
+  ReplayView.tsx           Wiedergabe einer Partie unter /replays/:id
   RatingsView.tsx          eigenes Rating bzw. Rangliste, Admin-Reset pro Person
   ReportsView.tsx          Meldungs-Visualisierung und Verwaltung (admin)
   GamesAdminView.tsx       Spiele anlegen, bearbeiten und löschen unter /admin/games (admin)
@@ -387,11 +391,13 @@ frontend/src/
     connectFourOdds.ts     Monte-Carlo-Bewertung einer Stellung und Zugchancen
     cameraAnalysis.ts      Erkennungsfeedback, Drohungen und Zugnoten der Kamera
     gameMoves.ts           beschreibt Züge für die Verlaufsliste
+    replay.ts              Schrittlogik der Wiedergabe (klemmen, vor/zurück)
     camera/                Kamera-Bibliothek: Kalibrierung, Erkennung, Zugtracker
 frontend/scripts/logic.test.ts      Tests für die reine Logik (npm test)
 frontend/scripts/games.test.ts      Tests für die Spiellogik der neuen Bretter
 frontend/scripts/camera.test.ts     Tests für Geometrie, Farben, Detektor und Tracker
 frontend/scripts/cameraAnalysis.test.ts  Tests für Live-Feedback und Zuganalyse
+frontend/scripts/replay.test.ts     Tests für die Schrittlogik der Wiedergabe
 ```
 
 `lib/gameTypes.ts` beschreibt die fünf bekannten Spiele (Regeln, Vorschau,
@@ -548,6 +554,8 @@ kommen aus `GET /api/reports/visualisation` und werden nur für Admins geladen.
 | `/`                | Spielekatalog – eine Kachel je Spiel                           | angemeldet                 |
 | `/games/:name`     | Einstellungen (host/admin) bzw. Spielstart (player)            | angemeldet                 |
 | `/sessions`        | Sitzungen und Spielverläufe über alle Spiele                   | host/admin                 |
+| `/replays`         | alle gespeicherten Partien, nach Spiel filterbar               | angemeldet                 |
+| `/replays/:id`     | Wiedergabe einer Partie: Brett, Züge, Ergebnis                 | angemeldet                 |
 | `/camera`          | Kamera-/Brettverfolgung                                        | host/admin                 |
 | `/ratings`         | eigenes Rating (player) bzw. Rangliste und Admin-Reset         | angemeldet                 |
 | `/reports`         | Meldungs-Visualisierung und Verwaltung                         | admin                      |
@@ -585,6 +593,26 @@ liegt in `useConnectFour`. Deshalb bleibt das Brett während der Pause eingebund
 Zeiger- *und* Tastatureingaben zurück, womit auch der „New Game“-Knopf des Bretts
 außer Reichweite liegt. Eine halbtransparente Deckschicht macht den Zustand
 sichtbar.
+
+### Spielverläufe nachspielen
+
+Unter **`/replays`** (Navigation „Verläufe“) sehen alle angemeldeten Rollen die
+gespeicherten Partien, auch Spieler:innen ohne Zugriff auf die
+Sitzungsverwaltung. Die Liste kommt aus `GET /api/games/results`, lässt sich
+nach Spiel filtern und öffnet mit „Nachspielen“ die Ansicht `/replays/:id`.
+Dieselben Einstiege gibt es auf den Spielkarten im Katalog und in der
+Direktauswahl, in der Sitzungsübersicht sowie im Ergebnis-Panel einer Sitzung.
+
+Die Wiedergabe ist rein lesend und ändert weder Sitzung noch Wertung. `step`
+zählt die bereits gezeigten Züge: `0` ist die Startstellung, `moves.length` der
+Endstand. `GamePreview` bekommt nur `moves.slice(0, step)` und baut daraus mit
+derselben Spiellogik wie die Partie die Stellung auf; der zuletzt gezeigte Zug
+wird hervorgehoben. Bedient wird über Abspielen/Pause, einen Zug vor und zurück,
+Anfang und Endstand, einen Schieberegler, die anklickbare Zugsliste sowie die
+Tasten Pfeil links/rechts und Home/End. Die reine Schrittlogik
+(`clampMoveStep`, `shiftMoveStep`, `replayStepLabel`) liegt in `lib/replay.ts`
+und ist durch `scripts/replay.test.ts` abgesichert. Für die Wiedergabe war keine
+Backend-Änderung nötig: Die Verläufe samt Zügen liefert die bestehende API.
 
 ### Datenhaltung
 
@@ -884,7 +912,7 @@ notfalls mit dem Startwert und leeren Zählern.
 ## Prüfen
 
 ```bash
-npm test                    # Router, Spiellogik, Ableitungen, Kamera-Feedback, Ergebnis-Prüfung
+npm test                    # Router, Spiellogik, Ableitungen, Wiedergabe, Kamera-Feedback, Ergebnis-Prüfung
 npm run lint                # eslint inkl. React-Compiler-Regeln
 npm run build               # tsc -b && vite build -> frontend/dist/
 npm run backend:check       # cargo check
