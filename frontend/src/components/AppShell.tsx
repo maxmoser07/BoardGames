@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
-import { Camera, CircleUser, Flag, History, LayoutGrid, Play, ShieldCheck, Trophy } from "lucide-react";
+import { Camera, CircleUser, Flag, History, LayoutGrid, Play, Settings, ShieldCheck, Trophy } from "lucide-react";
 
 import { api } from "../lib/api";
 import { signOut, useAuth } from "../lib/auth";
 import { ROLE_LABEL } from "../lib/format";
-import { canViewCamera, canViewReports, canViewSessions } from "../lib/permissions";
+import { canManageGames, canViewCamera, canViewReports, canViewSessions } from "../lib/permissions";
 import { useNavigate } from "../router";
 import type { UserRole } from "../types";
 import { Logo } from "./Logo";
@@ -12,9 +12,11 @@ import { Logo } from "./Logo";
 export type ShellSection =
   | "catalog"
   | "play"
+  | "replays"
   | "camera"
   | "sessions"
   | "reports"
+  | "adminGames"
   | "ratings"
   | "profile";
 
@@ -27,6 +29,7 @@ interface AppShellProps {
 const NAV = [
   { path: "/", label: "Spiele", icon: LayoutGrid, match: "catalog", visible: () => true },
   { path: "/play", label: "Direkt spielen", icon: Play, match: "play", visible: () => true },
+  { path: "/replays", label: "Verläufe", icon: History, match: "replays", visible: () => true },
   {
     path: "/camera",
     label: "Kamera",
@@ -47,6 +50,13 @@ const NAV = [
     icon: Flag,
     match: "reports",
     visible: (role: UserRole) => canViewReports(role),
+  },
+  {
+    path: "/admin/games",
+    label: "Spiele verwalten",
+    icon: Settings,
+    match: "adminGames",
+    visible: (role: UserRole) => canManageGames(role),
   },
   {
     path: "/ratings",

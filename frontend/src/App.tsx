@@ -5,14 +5,17 @@ import ProfileView from "./ProfileView";
 import CameraView from "./CameraView";
 import { Notice } from "./components/ui";
 import Catalog from "./Catalog";
+import GamesAdminView from "./GamesAdminView";
 import GameSetup from "./GameSetup";
 import PlayView from "./PlayView";
 import RatingsView from "./RatingsView";
+import ReplaysView from "./ReplaysView";
+import ReplayView from "./ReplayView";
 import ReportsView from "./ReportsView";
 import SessionsView from "./SessionsView";
 import { api } from "./lib/api";
 import { useAuth } from "./lib/auth";
-import { canViewCamera, canViewReports, canViewSessions } from "./lib/permissions";
+import { canManageGames, canViewCamera, canViewReports, canViewSessions } from "./lib/permissions";
 import { useNavigate, useRoute } from "./router";
 
 /**
@@ -22,8 +25,8 @@ import { useNavigate, useRoute } from "./router";
  * Vor jeder Ansicht steht die Rollenpruefung: `player` kommt an Katalog,
  * Spielansicht, eigenes Profil, `/play` und das eigene Rating; `host`
  * zusaetzlich an Sitzungsverwaltung, Kamera und Rangliste; `admin` zusaetzlich
- * an Meldungen und Benutzerverwaltung. Die API prueft dieselben Regeln noch
- * einmal.
+ * an Meldungen, Spieleverwaltung und Benutzerverwaltung. Die API prueft
+ * dieselben Regeln noch einmal.
  */
 export const App: React.FC = () => {
   const route = useRoute();
@@ -64,10 +67,20 @@ export const App: React.FC = () => {
       ) : (
         <NoAccess message="Meldungen sind der Administration vorbehalten." />
       );
+    case "adminGames":
+      return canManageGames(user.role) ? (
+        <GamesAdminView />
+      ) : (
+        <NoAccess message="Die Spieleverwaltung ist der Administration vorbehalten." />
+      );
     case "ratings":
       return <RatingsView />;
     case "play":
       return <PlayView key={route.gameName ?? "auswahl"} gameName={route.gameName} />;
+    case "replays":
+      return <ReplaysView />;
+    case "replay":
+      return <ReplayView key={route.gameId} gameId={route.gameId} />;
     case "camera":
       return canViewCamera(user.role) ? (
         <CameraView />
@@ -92,8 +105,10 @@ export const App: React.FC = () => {
               }
             >
               Erlaubt sind <code>/</code>, <code>/games/&lt;name&gt;</code>, <code>/play</code>,{" "}
-              <code>/play/&lt;name&gt;</code>, <code>/camera</code>, <code>/sessions</code>,{" "}
-              <code>/reports</code>, <code>/ratings</code>, <code>/profile</code> und{" "}
+              <code>/play/&lt;name&gt;</code>, <code>/replays</code>,{" "}
+              <code>/replays/&lt;id&gt;</code>, <code>/camera</code>, <code>/sessions</code>,{" "}
+              <code>/reports</code>, <code>/admin/games</code>, <code>/ratings</code>,{" "}
+              <code>/profile</code> und{" "}
               <code>/&lt;spiel&gt;/&lt;id&gt;</code>.
             </Notice>
           </main>

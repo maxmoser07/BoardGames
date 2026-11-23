@@ -10,7 +10,7 @@ import { api } from "./lib/api";
 import { useAuth } from "./lib/auth";
 import { canManageSession, canOpenSession, isAdmin } from "./lib/permissions";
 import { useNavigate } from "./router";
-import type { GameSession } from "./types";
+import type { GameSession, RecordedGame } from "./types";
 
 /**
  * Queransicht über alle Spiele: laufende und beendete Sitzungen sowie die
@@ -79,6 +79,7 @@ const SessionsView: React.FC = () => {
         void run(() => api.abortSession(session.id));
       }
     },
+    onReplay: (game: RecordedGame) => navigate(`/replays/${game.id}`),
   };
 
   return (
@@ -233,7 +234,13 @@ const SessionsView: React.FC = () => {
           ) : allGames.length > 0 ? (
             <ul className="list list--games">
               {allGames.map((game) => (
-                <GameCard key={game.id} game={game} session={undefined} users={userMap} />
+                <GameCard
+                  key={game.id}
+                  game={game}
+                  session={undefined}
+                  users={userMap}
+                  onReplay={(recorded) => navigate(`/replays/${recorded.id}`)}
+                />
               ))}
             </ul>
           ) : (

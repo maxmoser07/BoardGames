@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Ban, Flag, Handshake, LayoutGrid, Pause, Play, RotateCcw, Trophy } from "lucide-react";
+import { Ban, Flag, Handshake, History, LayoutGrid, Pause, Play, RotateCcw, Trophy } from "lucide-react";
 
 import ConnectFourGame from "./ConnectFourGame";
 import { GameBoard } from "./games/GameBoard";
@@ -12,7 +12,7 @@ import { usePausedTime } from "./hooks/usePausedTime";
 import { ApiError, api } from "./lib/api";
 import { useAuth } from "./lib/auth";
 import { formatDateTime, formatDuration } from "./lib/format";
-import { findGameType } from "./lib/gameTypes";
+import { findGameType, usesClassicConnectFour } from "./lib/gameTypes";
 import { installGameResultEndpoint } from "./lib/gameResultEndpoint";
 import { canManageSession, canOpenSession, canSurrenderSeat } from "./lib/permissions";
 import { useNavigate, windowPath } from "./router";
@@ -24,6 +24,7 @@ import {
   sessionStatus,
   statusLabel,
   type GameSession,
+  type GameType,
   type RecordedGame,
   type Side,
   type User,
@@ -54,11 +55,15 @@ function nameOf(users: Map<number, User>, id: number): string {
 export const GameSessionWindow: React.FC<Props> = ({ sessionId }) => {
   const users = useLiveData(() => api.getUsers());
   const session = useLiveData(() => api.getSession(sessionId));
+  const gameTypes = useLiveData(() => api.getGameTypes());
   const navigate = useNavigate();
   const { user } = useAuth();
 
   const userMap = new Map((users.data ?? []).map((user) => [user.id, user]));
   const loaded = session.data ?? null;
+  const gameType =
+    (gameTypes.data ?? []).find((game) => game.name === loaded?.gameType) ??
+    findGameType(loaded?.gameType ?? "");
 
   return (
     <div className="window">
@@ -66,7 +71,7 @@ export const GameSessionWindow: React.FC<Props> = ({ sessionId }) => {
         <div className="window__brand">
           <Logo size={24} />
           <div>
-            <p className="window__title">{findGameType(loaded?.gameType ?? "")?.displayName ?? "Spielfeld"}</p>
+            <p className="window__title">{gameType?.displayName ?? "Spielfeld"}</p>
             <p className="window__subtitle">
               Sitzung <code>{sessionId}</code>
             </p>
@@ -127,6 +132,7 @@ export const GameSessionWindow: React.FC<Props> = ({ sessionId }) => {
         ) : (
           <SessionBody
             session={loaded}
+            gameType={gameType}
             users={userMap}
             role={user?.role}
             userId={user?.id}
@@ -139,6 +145,7 @@ export const GameSessionWindow: React.FC<Props> = ({ sessionId }) => {
 
 interface SessionBodyProps {
   session: GameSession;
+  gameType: GameType | undefined;
   users: Map<number, User>;
   role: UserRole | undefined;
   userId: number | undefined;
@@ -150,7 +157,7 @@ interface SessionBodyProps {
  * und den eingefrorenen `useConnectFour`); sobald die Sitzung einen Ausgang
  * hat, zeigt das Fenster das Endergebnis.
  */
-function SessionBody({ session, users, role, userId }: SessionBodyProps) {
+function SessionBody({ session, gameType, users, role, userId }: SessionBodyProps) {
   const games = useLiveData(() => api.listGames());
   const navigate = useNavigate();
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -288,12 +295,12 @@ function SessionBody({ session, users, role, userId }: SessionBodyProps) {
               die Deckschicht macht den Zustand sichtbar. */}
           <div className="board" data-paused={paused}>
             <div className="board__panel" inert={paused || undefined}>
-              {session.gameType === "connect-four" ? (
+              {gameType && usesClassicConnectFour(gameType) ? (
                 <ConnectFourGame key={session.id} />
-              ) : (
+              ) : gameType ? (
                 <GameBoard
                   key={session.id}
-                  gameType={session.gameType}
+                  game={gameType}
                   context={{
                     gameType: session.gameType,
                     sessionId: session.id,
@@ -304,6 +311,10 @@ function SessionBody({ session, users, role, userId }: SessionBodyProps) {
                     friendly: session.friendly ?? false,
                   }}
                 />
+              ) : (
+                <Notice tone="warn" title="Kein Brett">
+                  Für <code>{session.gameType}</code> ist keine Spiellogik hinterlegt.
+                </Notice>
               )}
             </div>
             {paused ? (
@@ -363,6 +374,7 @@ function SessionBody({ session, users, role, userId }: SessionBodyProps) {
           busy={busy}
           canRematch={canManage}
           onRematch={handleRematch}
+          onReplay={game ? () => navigate(`/replays/${game.id}`) : undefined}
           onBack={() => navigate("/")}
         />
       )}
@@ -378,10 +390,21 @@ interface ResultPanelProps {
   busy: boolean;
   canRematch: boolean;
   onRematch: () => void;
+  onReplay?: () => void;
   onBack: () => void;
 }
 
-function ResultPanel({ session, game, users, elapsed, busy, canRematch, onRematch, onBack }: ResultPanelProps) {
+function ResultPanel({
+  session,
+  game,
+  users,
+  elapsed,
+  busy,
+  canRematch,
+  onRematch,
+  onReplay,
+  onBack,
+}: ResultPanelProps) {
   return (
     <section className="result" aria-label="Ergebnis">
       <p className="result__headline">
@@ -424,6 +447,12 @@ function ResultPanel({ session, game, users, elapsed, busy, canRematch, onRematc
           <button type="button" className="btn btn--primary btn--sm" onClick={onRematch} disabled={busy}>
             <RotateCcw aria-hidden="true" size={15} />
             Neue Partie
+          </button>
+        ) : null}
+        {onReplay ? (
+          <button type="button" className="btn btn--ghost btn--sm" onClick={onReplay}>
+            <History aria-hidden="true" size={15} />
+            Verlauf nachspielen
           </button>
         ) : null}
         <button type="button" className="btn btn--ghost btn--sm" onClick={onBack}>

@@ -7,6 +7,13 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { describeMove } from "../src/lib/gameMoves.ts";
+import {
+  emptyGridBoard,
+  gridWinner,
+  placeGridMove,
+  type GridBoard,
+  type GridRules,
+} from "../src/games/logic/grid.ts";
 import { emptyTicTacToeBoard, ticTacToeMove, ticTacToeWinner } from "../src/games/logic/tictactoe.ts";
 import {
   flipMemoryCard,
@@ -54,6 +61,62 @@ describe("Tic Tac Toe", () => {
     const next = ticTacToeMove(board, 0, "red");
     assert.ok(next);
     assert.equal(ticTacToeMove(next, 0, "yellow"), null);
+  });
+});
+
+describe("Konfigurierbares Raster", () => {
+  const rules: GridRules = { rows: 5, cols: 5, winLength: 4, gravity: false };
+
+  it("erkennt vier in einer Reihe auf einem größeren Brett", () => {
+    let board = emptyGridBoard(rules);
+    let last = 0;
+    for (const [row, col, side] of [
+      [0, 0, "red"],
+      [1, 0, "yellow"],
+      [0, 1, "red"],
+      [1, 1, "yellow"],
+      [0, 2, "red"],
+      [1, 2, "yellow"],
+      [0, 3, "red"],
+    ] as const) {
+      const placed = placeGridMove(board, rules, side, col, row);
+      assert.ok(placed);
+      board = placed.board;
+      last = placed.index;
+    }
+    assert.equal(gridWinner(board, rules, last), "red");
+  });
+
+  it("lässt Steine in der Vier-Gewinnt-Vorlage fallen", () => {
+    const gravity: GridRules = { rows: 6, cols: 7, winLength: 4, gravity: true };
+    const placed = placeGridMove(emptyGridBoard(gravity), gravity, "red", 3, 0);
+    assert.ok(placed);
+    assert.equal(placed.row, 5);
+    assert.equal(placed.index, 5 * 7 + 3);
+  });
+
+  it("meldet ein volles Brett ohne Reihe als Unentschieden", () => {
+    const small: GridRules = { rows: 3, cols: 3, winLength: 3, gravity: false };
+    const cells: Array<[number, number]> = [
+      [0, 0],
+      [0, 1],
+      [0, 2],
+      [1, 1],
+      [1, 0],
+      [1, 2],
+      [2, 1],
+      [2, 0],
+      [2, 2],
+    ];
+    let board: GridBoard = emptyGridBoard(small);
+    let last = 0;
+    cells.forEach(([row, col], index) => {
+      const placed = placeGridMove(board, small, index % 2 === 0 ? "red" : "yellow", col, row);
+      assert.ok(placed);
+      board = placed.board;
+      last = placed.index;
+    });
+    assert.equal(gridWinner(board, small, last), "draw");
   });
 });
 

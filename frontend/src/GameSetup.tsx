@@ -463,7 +463,12 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
           ) : gameGames.length > 0 ? (
             <ul className="list list--games">
               {gameGames.slice(0, 4).map((game) => (
-                <GameCard key={game.id} game={game} users={userMap} />
+                <GameCard
+                  key={game.id}
+                  game={game}
+                  users={userMap}
+                  onReplay={(recorded) => navigate(`/replays/${recorded.id}`)}
+                />
               ))}
             </ul>
           ) : (

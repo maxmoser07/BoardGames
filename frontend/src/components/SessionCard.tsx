@@ -1,4 +1,4 @@
-import { Ban, ChevronRight, Flag, Pause, Play, Trophy } from "lucide-react";
+import { Ban, ChevronRight, Flag, Pause, Play, RotateCcw, Trophy } from "lucide-react";
 
 import { formatDuration, formatRelative } from "../lib/format";
 import { describeMove } from "../lib/gameMoves";
@@ -27,6 +27,8 @@ interface SessionCardProps {
   onAbort: (session: GameSession) => void;
   onPause: (session: GameSession) => void;
   onResume: (session: GameSession) => void;
+  /** Öffnet die Wiedergabe des gespeicherten Verlaufs. */
+  onReplay?: (game: RecordedGame) => void;
 }
 
 const STATUS_TONE: Record<ReturnType<typeof sessionStatus>, string> = {
@@ -63,6 +65,7 @@ export function SessionCard({
   onAbort,
   onPause,
   onResume,
+  onReplay,
 }: SessionCardProps) {
   const status = sessionStatus(session);
   const running = status === "running";
@@ -145,6 +148,12 @@ export function SessionCard({
             <button type="button" className="btn btn--primary btn--sm" onClick={() => onOpen(session)}>
               <Play aria-hidden="true" size={15} />
               {open ? "Spielfeld öffnen" : "Ergebnis öffnen"}
+            </button>
+          ) : null}
+          {game && onReplay ? (
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => onReplay(game)}>
+              <RotateCcw aria-hidden="true" size={15} />
+              Nachspielen
             </button>
           ) : null}
           {open && canManage ? (

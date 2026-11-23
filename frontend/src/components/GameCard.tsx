@@ -1,4 +1,4 @@
-import { Dices } from "lucide-react";
+import { Dices, Play } from "lucide-react";
 
 import { formatDateTime, formatDuration } from "../lib/format";
 import { summariseMoves } from "../lib/connectFour";
@@ -11,6 +11,10 @@ interface GameCardProps {
   /** Sitzung, aus der die Partie stammt – optional, wenn nur der Verlauf zählt. */
   session?: GameSession;
   users: Map<number, User>;
+  /** Anzeigename des Spiels, wenn die Karte ausserhalb einer Spielseite steht. */
+  gameLabel?: string;
+  /** Öffnet die Wiedergabe; fehlt der Callback, entfällt der Knopf. */
+  onReplay?: (game: RecordedGame) => void;
 }
 
 const WINNER_TONE: Record<RecordedGame["winner"], string> = {
@@ -25,7 +29,7 @@ function nameOf(users: Map<number, User>, id: number | null): string {
 }
 
 /** Ein abgeschlossener Spielverlauf in der Ergebnishistorie. */
-export function GameCard({ game, session, users }: GameCardProps) {
+export function GameCard({ game, session, users, gameLabel, onReplay }: GameCardProps) {
   const counts = summariseMoves(game.moves);
   const label = game.winner === "draw" ? "Unentschieden" : `${SIDE_LABEL[game.winner]} gewinnt`;
 
@@ -35,6 +39,7 @@ export function GameCard({ game, session, users }: GameCardProps) {
 
       <div className="game__body">
         <p className="game__headline">
+          {gameLabel ? <span className="chip">{gameLabel}</span> : null}
           <Badge tone={WINNER_TONE[game.winner]}>{label}</Badge>
           {game.demo ? <span className="chip chip--demo">Beispiel</span> : null}
           {game.friendly ? <span className="chip chip--friendly">Freundschaftsspiel</span> : null}
@@ -74,6 +79,15 @@ export function GameCard({ game, session, users }: GameCardProps) {
             <dd>{session ? <code>{session.id}</code> : <span className="muted">direkt gespielt</span>}</dd>
           </div>
         </dl>
+
+        {onReplay ? (
+          <div className="game__actions">
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => onReplay(game)}>
+              <Play aria-hidden="true" size={15} />
+              Nachspielen
+            </button>
+          </div>
+        ) : null}
       </div>
 
       {session ? (

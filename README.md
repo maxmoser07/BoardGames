@@ -9,7 +9,8 @@ Dazu kommen eine Webcam-Erkennung für ein physisches Brett samt Live-Feedback
 zur Erkennungsqualität und Zuganalyse, Freundschaftsanfragen im Profil und eine
 rollenabhängige Oberfläche: Spieler:innen sehen ihr eigenes Rating, Hosts
 zusätzlich Sitzungen, Kamera und Rangliste, Admins zusätzlich Meldungen,
-Ratings und Benutzerverwaltung.
+Ratings, Benutzer- und Spieleverwaltung. Gespeicherte Partien lassen sich unter
+`/replays` von allen Rollen Zug für Zug nachspielen.
 
 Dieses README ist die einzige Projektdokumentation und beschreibt Backend,
 Frontend, Betrieb, API und Tests.
@@ -269,12 +270,14 @@ ohnehin verboten wäre.
 | Pause/Fortsetzen/Beenden                 | nein          | eigene Sitzung   | alle Sitzungen    |
 | Aufgeben                                 | eigener Platz | eigener Platz    | eigener/erzwungen |
 | Sitzungsübersicht `/sessions`            | nein          | ja               | ja                |
+| Verläufe nachspielen `/replays`          | ja            | ja               | ja                |
 | Kamera-/Brettverfolgung `/camera`        | nein          | ja               | ja                |
 | Rangliste `/ratings`                     | eigenes Rating | Rangliste       | Rangliste         |
 | Meldungs-Visualisierung `/reports`       | nein          | nein             | ja                |
 | Meldungen verwalten (Details)            | nein          | nein             | ja                |
 | Rating zurücksetzen                      | nein          | nein             | ja                |
 | Benutzerverwaltung `/api/admin/users`    | nein          | nein             | ja                |
+| Spiele anlegen/löschen `/admin/games`    | nein          | nein             | ja                |
 | Beispieldaten löschen                    | nein          | nein             | ja                |
 
 Ein **gesperrtes** Konto darf noch lesen, aber nichts schreiben: die
@@ -287,9 +290,9 @@ einmal im Backend (`backend/src/api.rs`).
 
 | Rolle  | Navigation                                      | Darf                                                          |
 | ------ | ----------------------------------------------- | ------------------------------------------------------------- |
-| player | Spiele, Direkt spielen, Mein Rating, Profil     | spielen und das eigene Rating sehen                            |
+| player | Spiele, Direkt spielen, Verläufe, Mein Rating, Profil | spielen, Verläufe nachspielen und das eigene Rating sehen |
 | host   | zusätzlich Sitzungen, Kamera, Rangliste         | eigene Sitzungen anlegen, pausieren, fortsetzen, beenden       |
-| admin  | zusätzlich Meldungsverwaltung                   | alles, auch fremde Sitzungen, Ratings, Meldungen und Benutzer  |
+| admin  | zusätzlich Meldungs- und Spieleverwaltung        | alles, auch fremde Sitzungen, Ratings, Meldungen, Benutzer und den Spielekatalog |
 
 Die Meldungsseite ist ausschließlich für Admins sichtbar; Spieler:innen und
 Hosts bekommen dort eine Kein-Zugriff-Meldung. Admins sehen auf `/ratings` pro
@@ -315,7 +318,7 @@ npm run dev        # http://localhost:5173
 npm run build      # tsc -b && vite build -> frontend/dist/
 npm run preview    # Produktionsbuild lokal ausliefern
 npm run lint       # eslint (inkl. React-Compiler-Regeln)
-npm test           # Router, Spiellogik, Ableitungen, Kamera-Feedback und Ergebnis-Prüfung (Node)
+npm test           # Router, Spiellogik, Ableitungen, Wiedergabe, Kamera-Feedback und Ergebnis-Prüfung (Node)
 ```
 
 Voraussetzung ist ein laufendes Backend: Sitzungen, Verläufe und Personen liegen
@@ -349,8 +352,11 @@ frontend/src/
   Catalog.tsx              Spielekatalog unter /
   GameSetup.tsx            Einstellungen unter /games/:name; für player nur der Spielstart
   SessionsView.tsx         Sitzungen und Verläufe unter /sessions (host/admin)
+  ReplaysView.tsx          gespeicherte Partien unter /replays (alle Rollen)
+  ReplayView.tsx           Wiedergabe einer Partie unter /replays/:id
   RatingsView.tsx          eigenes Rating bzw. Rangliste, Admin-Reset pro Person
   ReportsView.tsx          Meldungs-Visualisierung und Verwaltung (admin)
+  GamesAdminView.tsx       Spiele anlegen, bearbeiten und löschen unter /admin/games (admin)
   ProfileView.tsx          eigenes Profil unter /profile inkl. Rating und Freundschaften
   CameraView.tsx           Kamera-/Brettverfolgung mit Live-Feedback unter /camera
   GameSessionWindow.tsx    Spielfeld-Fenster unter /:spiel/:id
@@ -366,8 +372,9 @@ frontend/src/
     WinOdds.tsx            Balken, Legende und Zugtipp zu den Gewinnchancen
     CameraAnalysis.tsx     Live-Feedback, Drohungen und Zugqualität der Kamera
     ReportVisualisation.tsx Statusbalken, Gründe, Monatsverlauf und Top-Meldungen
-  games/                   Tic Tac Toe, Memory, Schach, Mensch
-    GameBoard.tsx          wählt das Brett zum Spielnamen
+  games/                   Raster für neue Spiele, Tic Tac Toe, Memory, Schach, Mensch
+    GameBoard.tsx          wählt das Brett anhand der Engine-Vorlage
+    GridGame.tsx           konfigurierbares Raster (Brettmaße, Gewinnlänge, Gravity)
     useGameRecord.ts       speichert ein Ergebnis genau einmal
     logic/                 reine Spiellogik, auch von npm test genutzt
   hooks/                   useLiveData, useNow, usePausedTime, usePersistentState,
@@ -378,21 +385,32 @@ frontend/src/
     permissions.ts         Rollenmatrix für Navigation und Bedienelemente
     ratings.ts             Sortierung, Stufen und Siegquote der Rangliste
     reportVisuals.ts       Aufbereitung der Status-, Grund- und Monatsdaten
+    gameTypes.ts           Katalog, Engine-Vorlagen und Zusammenführung mit rules_json
     gameResultEndpoint.ts  ergänzt Sitzungs-Id und Spielzeit beim POST des Hooks
     connectFour.ts         Validierung eines abgeschlossenen Spielverlaufs
     connectFourOdds.ts     Monte-Carlo-Bewertung einer Stellung und Zugchancen
     cameraAnalysis.ts      Erkennungsfeedback, Drohungen und Zugnoten der Kamera
     gameMoves.ts           beschreibt Züge für die Verlaufsliste
+    replay.ts              Schrittlogik der Wiedergabe (klemmen, vor/zurück)
     camera/                Kamera-Bibliothek: Kalibrierung, Erkennung, Zugtracker
 frontend/scripts/logic.test.ts      Tests für die reine Logik (npm test)
 frontend/scripts/games.test.ts      Tests für die Spiellogik der neuen Bretter
 frontend/scripts/camera.test.ts     Tests für Geometrie, Farben, Detektor und Tracker
 frontend/scripts/cameraAnalysis.test.ts  Tests für Live-Feedback und Zuganalyse
+frontend/scripts/replay.test.ts     Tests für die Schrittlogik der Wiedergabe
 ```
 
-Der Katalog in `lib/gameTypes.ts` listet alle fünf Spiele als spielbar. Die
-neuen Spiele sind bewusst Zweipersonen-Fassungen und nutzen dasselbe
-Rot/Gelb-Sitzplatzmodell wie Vier Gewinnt.
+`lib/gameTypes.ts` beschreibt die fünf bekannten Spiele (Regeln, Vorschau,
+Akzentfarbe) und markiert sie als spielbar. Welche Einträge der Katalog
+tatsächlich zeigt, bestimmt `game_types` in der Datenbank: `GET /api/games`
+liefert die Zeilen, `mergeGameTypes` verbindet sie mit der Darstellung. Für
+bekannte Spiele bleiben die Werte aus `GAME_TYPES` der Standard; ein
+`rules_json` aus der Datenbank überschreibt sie. Ein von der Administration neu
+angelegtes Spiel ist sofort spielbar, sobald es eine Engine-Vorlage mitbringt;
+ohne Vorlage erscheint es als „in Arbeit“. Ein gelöschtes Spiel verschwindet aus
+Katalog und Direktauswahl. Die neuen Spiele sind bewusst
+Zweipersonen-Fassungen und nutzen dasselbe Rot/Gelb-Sitzplatzmodell wie Vier
+Gewinnt.
 
 #### Farben und Seiten
 
@@ -478,6 +496,49 @@ Richtungen abfragen. Die Tabelle verhindert Selbstanfragen und doppelte
 Richtungen; eine abgelehnte Anfrage darf später erneut gestellt werden und wird
 dann ersetzt. `useLiveData` lädt die Übersicht nach jeder Aktion neu.
 
+### Spieleverwaltung
+
+Unter **`/admin/games`** (Navigation „Spiele verwalten“, nur Admin) lassen sich
+Katalogeinträge anlegen, bearbeiten und löschen. Das Formular nimmt Kennung
+(`game_types.name`, Kleinbuchstaben/Ziffern/einzelne Bindestriche), Anzeigename
+und Spielerzahl (2 bis 16) entgegen. `POST /api/games` prüft dieselben Regeln
+serverseitig und antwortet bei einer bereits vergebenen Kennung mit `409`. Die
+Kennung bleibt beim Bearbeiten unverändert, weil Sitzungen und Verläufe darauf
+verweisen.
+
+Die Spiellogik steht als kleine Konfiguration in `game_types.rules_json`:
+
+```json
+{
+  "engine": "connect-four",
+  "tagline": "9×10 · fünf in einer Reihe",
+  "description": "Große Variante.",
+  "rules": ["Fünf in einer Reihe gewinnt"],
+  "accent": "teal",
+  "board": { "rows": 10, "cols": 9 },
+  "win_length": 5,
+  "gravity": true
+}
+```
+
+`engine` wählt eine Vorlage: `grid` (freie Platzierung, z. B. Tic Tac Toe),
+`connect-four` (fallende Steine), `memory`, `chess` oder `mensch`. Brettmaße
+(3–20), Gewinnlänge (3–20, höchstens die längere Brettseite) und `gravity`
+steuern das generische Raster; die drei festen Vorlagen bringen ihre Regeln
+selbst mit. Untertitel, Beschreibung, Regelliste und Akzentfarbe überschreiben
+die Darstellung. Das Backend prüft erlaubte Felder, Wertebereiche und eine
+Obergrenze von 16 KiB, damit keine beliebige Logik in der Datenbank landet.
+`PATCH`/`PUT /api/games/{id}` aktualisiert Anzeige, Spielerzahl und Regeln;
+`rules_json: null` entfernt die Logik wieder.
+
+Neue Spiele mit Engine sind sofort spielbar, ohne Frontend-Neubuild: Katalog
+und Direktauswahl lesen die Konfiguration aus der Datenbank, `GameBoard` wählt
+anhand der Engine das Brett, und die Fensteradresse folgt der Kennung
+(`/<game-name>/<session-id>`). Ohne Engine bleibt ein Eintrag „in Arbeit“.
+`DELETE /api/games/{id}` entfernt den Eintrag; solange noch Sitzungen dazu
+existieren, lehnt die Route mit `409` ab, damit die Historie nicht verloren
+geht.
+
 ### Meldungs-Visualisierung
 
 `ReportVisualisation` zeigt die Gesamtzahl, die Statusverteilung als gestapelten
@@ -493,12 +554,20 @@ kommen aus `GET /api/reports/visualisation` und werden nur für Admins geladen.
 | `/`                | Spielekatalog – eine Kachel je Spiel                           | angemeldet                 |
 | `/games/:name`     | Einstellungen (host/admin) bzw. Spielstart (player)            | angemeldet                 |
 | `/sessions`        | Sitzungen und Spielverläufe über alle Spiele                   | host/admin                 |
+| `/replays`         | alle gespeicherten Partien, nach Spiel filterbar               | angemeldet                 |
+| `/replays/:id`     | Wiedergabe einer Partie: Brett, Züge, Ergebnis                 | angemeldet                 |
 | `/camera`          | Kamera-/Brettverfolgung                                        | host/admin                 |
 | `/ratings`         | eigenes Rating (player) bzw. Rangliste und Admin-Reset         | angemeldet                 |
 | `/reports`         | Meldungs-Visualisierung und Verwaltung                         | admin                      |
+| `/admin/games`     | Spiele im Katalog anlegen und löschen                          | admin                      |
 | `/profile`         | eigenes Profil inkl. Rating und Freundschaften                 | angemeldet                 |
 | `/play`            | Brett direkt im Tab, ohne Sitzung                              | angemeldet                 |
-| `/connectfour/:id` | Spielfeld-Fenster, wird per `window.open` als Pop-up geöffnet  | Mitwirkende, Host, Admin   |
+| `/play/:name`      | Direktpartie eines Spiels                                      | angemeldet                 |
+| `/:spiel/:id`      | Spielfeld-Fenster, wird per `window.open` als Pop-up geöffnet  | Mitwirkende, Host, Admin   |
+| `/connectfour/:id` | kurze Adresse des eingebauten Vier-Gewinnt-Fensters            | Mitwirkende, Host, Admin   |
+
+Neue Spiele verwenden ihre eigene Kennung als Fensterpfad
+(`/backgammon/12`); die kurzen Adressen der eingebauten Spiele bleiben erhalten.
 
 Für den Produktivbetrieb braucht der Server einen SPA-Fallback: unbekannte
 Pfade müssen `index.html` ausliefern. `npm run preview` macht das bereits;
@@ -524,6 +593,26 @@ liegt in `useConnectFour`. Deshalb bleibt das Brett während der Pause eingebund
 Zeiger- *und* Tastatureingaben zurück, womit auch der „New Game“-Knopf des Bretts
 außer Reichweite liegt. Eine halbtransparente Deckschicht macht den Zustand
 sichtbar.
+
+### Spielverläufe nachspielen
+
+Unter **`/replays`** (Navigation „Verläufe“) sehen alle angemeldeten Rollen die
+gespeicherten Partien, auch Spieler:innen ohne Zugriff auf die
+Sitzungsverwaltung. Die Liste kommt aus `GET /api/games/results`, lässt sich
+nach Spiel filtern und öffnet mit „Nachspielen“ die Ansicht `/replays/:id`.
+Dieselben Einstiege gibt es auf den Spielkarten im Katalog und in der
+Direktauswahl, in der Sitzungsübersicht sowie im Ergebnis-Panel einer Sitzung.
+
+Die Wiedergabe ist rein lesend und ändert weder Sitzung noch Wertung. `step`
+zählt die bereits gezeigten Züge: `0` ist die Startstellung, `moves.length` der
+Endstand. `GamePreview` bekommt nur `moves.slice(0, step)` und baut daraus mit
+derselben Spiellogik wie die Partie die Stellung auf; der zuletzt gezeigte Zug
+wird hervorgehoben. Bedient wird über Abspielen/Pause, einen Zug vor und zurück,
+Anfang und Endstand, einen Schieberegler, die anklickbare Zugsliste sowie die
+Tasten Pfeil links/rechts und Home/End. Die reine Schrittlogik
+(`clampMoveStep`, `shiftMoveStep`, `replayStepLabel`) liegt in `lib/replay.ts`
+und ist durch `scripts/replay.test.ts` abgesichert. Für die Wiedergabe war keine
+Backend-Änderung nötig: Die Verläufe samt Zügen liefert die bestehende API.
 
 ### Datenhaltung
 
@@ -740,6 +829,10 @@ Datenzugriff der Oberfläche. Die Tabelle nennt deshalb auch die passende
 | GET     | `/api/admin/users`                      | Benutzerverwaltung (nur Admin)         | –                       | `users` |
 | PATCH   | `/api/admin/users/{id}`                 | Rolle/Sperre ändern (nur Admin)        | –                       | `users` |
 | GET     | `/api/games`                            | Spieltypen aus `game_types`            | `getGameTypes`, `getGameType` | `game_types` |
+| POST    | `/api/games`                            | Spiel anlegen (nur Admin)              | `createGameType`        | `game_types` |
+| PATCH   | `/api/games/{id}`                       | Anzeige, Spielerzahl und Regeln ändern (nur Admin) | `updateGameType` | `game_types` |
+| PUT     | `/api/games/{id}`                       | wie `PATCH`                            | `updateGameType`        | `game_types` |
+| DELETE  | `/api/games/{id}`                       | Spiel löschen (nur Admin)              | `deleteGameType`        | `game_types`, `game_sessions` |
 | GET     | `/api/sessions`                         | gehostete Sitzungen, neueste zuerst    | `listSessions`          | `game_sessions`, `game_session_players` |
 | POST    | `/api/sessions`                         | Sitzung anlegen (Host/Admin)           | `createSession`         | dito |
 | GET     | `/api/sessions/{id}`                    | eine Sitzung                           | `getSession`            | dito |
@@ -819,7 +912,7 @@ notfalls mit dem Startwert und leeren Zählern.
 ## Prüfen
 
 ```bash
-npm test                    # Router, Spiellogik, Ableitungen, Kamera-Feedback, Ergebnis-Prüfung
+npm test                    # Router, Spiellogik, Ableitungen, Wiedergabe, Kamera-Feedback, Ergebnis-Prüfung
 npm run lint                # eslint inkl. React-Compiler-Regeln
 npm run build               # tsc -b && vite build -> frontend/dist/
 npm run backend:check       # cargo check
@@ -869,6 +962,9 @@ Kommentare in `backend/migrations/20250101000000_init_schema.sql`.
   offen; die Direktansicht `/play` ist nicht betroffen.
 * **Wertungen starten bei 1000.** Bestehende Konten bekommen ihre Zeile aus der
   Migration, neue beim Registrieren. Frühere Partien werden nicht nachberechnet.
+* **Spiele mit Partien bleiben.** `DELETE /api/games/{id}` antwortet mit `409`,
+  solange Sitzungen zu dem Spiel existieren. Wer den Eintrag wirklich entfernen
+  will, muss zuerst die Sitzungen löschen; die Historie bleibt so erhalten.
 * **Pop-up-Blocker.** Blockiert der Browser `window.open`, gibt das Dashboard
   einen Link statt des Fensters aus.
 * **`website/boardgames/`** war ein veraltetes Duplikat des Frontends und wurde

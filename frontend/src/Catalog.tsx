@@ -161,7 +161,11 @@ const Catalog: React.FC = () => {
             <button type="button" className="link" onClick={() => navigate("/play")}>
               Direkt spielen
             </button>
-            .
+            . Beendete Partien kannst du unter{" "}
+            <button type="button" className="link" onClick={() => navigate("/replays")}>
+              Verläufe
+            </button>{" "}
+            nachspielen.
           </p>
         )}
         <p>

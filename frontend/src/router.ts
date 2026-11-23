@@ -5,7 +5,10 @@
  *   /                    Spielekatalog
  *   /games/:name         Einstellungen eines Spiels
  *   /sessions            Sitzungen und Spielverläufe
+ *   /replays             Alle gespeicherten Partien nachspielen
+ *   /replays/:id         Wiedergabe einer Partie
  *   /reports             Meldungen und rollenabhängige Visualisierung
+ *   /admin/games         Spiele im Katalog anlegen und löschen (Admin)
  *   /ratings             Rangliste der Spieler-Ratings
  *   /play                Auswahl für eine Partie ohne Sitzung
  *   /play/:name          Partie eines Spiels ohne Sitzung, direkt im Tab
@@ -23,7 +26,10 @@ export type Route =
   | { name: "profile" }
   | { name: "setup"; gameName: string }
   | { name: "sessions" }
+  | { name: "replays" }
+  | { name: "replay"; gameId: string }
   | { name: "reports" }
+  | { name: "adminGames" }
   | { name: "ratings" }
   | { name: "play"; gameName?: string }
   | { name: "camera" }
@@ -31,8 +37,9 @@ export type Route =
   | { name: "notFound"; path: string };
 
 /**
- * Fenster-Routen nach URL-Abschnitt auf den Spielnamen. Jedes spielbare Spiel
- * hat ein eigenes Pop-up; der Abschnitt ist die kurze, stabile Adresse.
+ * Kurze, stabile Fenster-Adressen der eingebauten Spiele. Neue Spiele aus der
+ * Administration verwenden direkt ihre Kennung (`/backgammon/12`), damit keine
+ * Liste im Frontend gepflegt werden muss.
  */
 const WINDOW_ROUTES: Record<string, string> = {
   connectfour: "connect-four",
@@ -42,6 +49,9 @@ const WINDOW_ROUTES: Record<string, string> = {
   "mensch-aergere-dich-nicht": "mensch-aergere-dich-nicht",
 };
 
+/** Kennung eines Spiels, wie `game_types.name` sie erlaubt. */
+const GAME_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
 export function parseRoute(pathname: string): Route {
   const path = pathname.replace(/\/+$/, "") || "/";
 
@@ -50,7 +60,9 @@ export function parseRoute(pathname: string): Route {
   if (path === "/auth/callback") return { name: "oauthCallback" };
   if (path === "/profile") return { name: "profile" };
   if (path === "/sessions") return { name: "sessions" };
+  if (path === "/replays") return { name: "replays" };
   if (path === "/reports") return { name: "reports" };
+  if (path === "/admin/games") return { name: "adminGames" };
   if (path === "/ratings") return { name: "ratings" };
   if (path === "/play") return { name: "play" };
   if (path === "/camera") return { name: "camera" };
@@ -58,11 +70,14 @@ export function parseRoute(pathname: string): Route {
   const direct = /^\/play\/([A-Za-z0-9_-]+)$/.exec(path);
   if (direct) return { name: "play", gameName: direct[1] };
 
+  const replay = /^\/replays\/([A-Za-z0-9_-]+)$/.exec(path);
+  if (replay) return { name: "replay", gameId: replay[1] };
+
   const setup = /^\/games\/([A-Za-z0-9_-]+)$/.exec(path);
   if (setup) return { name: "setup", gameName: setup[1] };
 
   const windowRoute = /^\/([A-Za-z0-9_-]+)\/([A-Za-z0-9_-]+)$/.exec(path);
-  if (windowRoute && windowRoute[1] in WINDOW_ROUTES) {
+  if (windowRoute && (windowRoute[1] in WINDOW_ROUTES || GAME_SLUG.test(windowRoute[1]))) {
     return { name: "game", sessionId: windowRoute[2] };
   }
 
@@ -74,12 +89,13 @@ export function setupPath(gameName: string): string {
 }
 
 /**
- * Pfad des Spielfeld-Fensters. `null`, solange für das Spiel noch keine
- * Fenster-Route existiert – dann darf auch keine Sitzung gestartet werden.
+ * Pfad des Spielfeld-Fensters. Eingebaute Spiele behalten ihre kurze Adresse;
+ * von der Administration angelegte Spiele verwenden ihre Kennung direkt.
  */
 export function windowPath(gameName: string, sessionId: string): string | null {
   const entry = Object.entries(WINDOW_ROUTES).find(([, name]) => name === gameName);
-  return entry ? `/${entry[0]}/${sessionId}` : null;
+  if (entry) return `/${entry[0]}/${sessionId}`;
+  return GAME_SLUG.test(gameName) ? `/${gameName}/${sessionId}` : null;
 }
 
 export function useRoute(): Route {

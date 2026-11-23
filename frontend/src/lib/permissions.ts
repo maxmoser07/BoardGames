@@ -49,6 +49,11 @@ export function canManageUsers(role: UserRole | undefined): boolean {
   return role === "admin";
 }
 
+/** Spiele im Katalog anlegen und loeschen: nur die Administration. */
+export function canManageGames(role: UserRole | undefined): boolean {
+  return role === "admin";
+}
+
 /** Jede angemeldete, nicht gesperrte Person darf spielen. */
 export function canPlay(role: UserRole | undefined): boolean {
   return role !== undefined;
