@@ -8,6 +8,15 @@ anyhow = "1"
 axum = "0.8"
 hex = "0.4"
 rand = "0.8"
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "form",
+    "query",
+    "rustls-no-provider",
+] }
+# Crypto-Provider fuer reqwest/rustls. sqlx bringt ring bereits mit; ohne
+# installierten Default-Provider panicked der HTTPS-Client beim ersten Aufruf.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 sha2 = "0.10"
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
@@ -26,3 +35,4 @@ sqlx = { version = "0.8", default-features = false, features = [
 ] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
 tower-http = { version = "0.6", features = ["cors"] }
+url = "2"

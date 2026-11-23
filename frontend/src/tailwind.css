@@ -1,0 +1,91 @@
+/* =============================================================================
+   Tailwind fuer die neue Oberflaeche (shadcn/ui)
+   =============================================================================
+   Die bestehende App nutzt src/index.css (eigenes Design-System, unlayered).
+   Damit die globalen Element-Regeln dort (h1, p, a, ...) die neuen
+   Utility-Klassen nicht ueberstimmen, werden die Utilities *unlayered*
+   eingebunden. Preflight bleibt bewusst aussen vor: index.css liefert bereits
+   einen Reset, und ein zweiter Reset koennte die alten Ansichten veraendern.
+
+   Alle shadcn-Variablen sind mit `--ui-` benannt, weil index.css bereits
+   `--border`, `--ring`, `--accent`, `--radius-*` usw. belegt. `@theme inline`
+   setzt die Utilities direkt auf var(--ui-...), sodass keine Kollision
+   entsteht.
+   ========================================================================== */
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css";
+
+/* ------------------------------------------------------------- Design-Tokens */
+
+:root {
+  --ui-radius: 0.625rem;
+
+  --ui-background: #ffffff;
+  --ui-foreground: #0a0a0a;
+  --ui-card: #ffffff;
+  --ui-card-foreground: #0a0a0a;
+  --ui-popover: #ffffff;
+  --ui-popover-foreground: #0a0a0a;
+  --ui-primary: #4f46e5;
+  --ui-primary-foreground: #ffffff;
+  --ui-secondary: #f5f5f5;
+  --ui-secondary-foreground: #171717;
+  --ui-muted: #f5f5f5;
+  --ui-muted-foreground: #737373;
+  --ui-accent: #f5f5f5;
+  --ui-accent-foreground: #171717;
+  --ui-destructive: #dc2626;
+  --ui-border: #e5e5e5;
+  --ui-input: #e5e5e5;
+  --ui-ring: #6366f1;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ui-background: #0a0a0a;
+    --ui-foreground: #fafafa;
+    --ui-card: #171717;
+    --ui-card-foreground: #fafafa;
+    --ui-popover: #171717;
+    --ui-popover-foreground: #fafafa;
+    --ui-primary: #818cf8;
+    --ui-primary-foreground: #1e1b4b;
+    --ui-secondary: #262626;
+    --ui-secondary-foreground: #fafafa;
+    --ui-muted: #262626;
+    --ui-muted-foreground: #a3a3a3;
+    --ui-accent: #262626;
+    --ui-accent-foreground: #fafafa;
+    --ui-destructive: #ef4444;
+    --ui-border: #262626;
+    --ui-input: #262626;
+    --ui-ring: #818cf8;
+  }
+}
+
+@theme inline {
+  --color-background: var(--ui-background);
+  --color-foreground: var(--ui-foreground);
+  --color-card: var(--ui-card);
+  --color-card-foreground: var(--ui-card-foreground);
+  --color-popover: var(--ui-popover);
+  --color-popover-foreground: var(--ui-popover-foreground);
+  --color-primary: var(--ui-primary);
+  --color-primary-foreground: var(--ui-primary-foreground);
+  --color-secondary: var(--ui-secondary);
+  --color-secondary-foreground: var(--ui-secondary-foreground);
+  --color-muted: var(--ui-muted);
+  --color-muted-foreground: var(--ui-muted-foreground);
+  --color-accent: var(--ui-accent);
+  --color-accent-foreground: var(--ui-accent-foreground);
+  --color-destructive: var(--ui-destructive);
+  --color-border: var(--ui-border);
+  --color-input: var(--ui-input);
+  --color-ring: var(--ui-ring);
+
+  --radius-sm: calc(var(--ui-radius) - 4px);
+  --radius-md: calc(var(--ui-radius) - 2px);
+  --radius-lg: var(--ui-radius);
+  --radius-xl: calc(var(--ui-radius) + 4px);
+}

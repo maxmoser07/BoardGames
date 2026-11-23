@@ -263,7 +263,7 @@ fn permissions_json(user: &CurrentUser) -> Value {
     })
 }
 
-async fn fetch_permissions(pool: &MySqlPool, id: u64) -> Result<CurrentUser, ApiError> {
+pub(crate) async fn fetch_permissions(pool: &MySqlPool, id: u64) -> Result<CurrentUser, ApiError> {
     sqlx::query_as::<_, CurrentUser>(
         "SELECT id, username, role, can_play, can_create_sessions,
                 can_manage_users, can_lock_users, can_manage_reports, can_write
@@ -278,7 +278,7 @@ async fn fetch_permissions(pool: &MySqlPool, id: u64) -> Result<CurrentUser, Api
 
 /// Erzeugt ein neues Bearer-Token. Zurueck kommen Token und Ablaufzeit;
 /// gespeichert wird nur der Hash.
-async fn issue_token(pool: &MySqlPool, user_id: u64) -> Result<(String, String), ApiError> {
+pub(crate) async fn issue_token(pool: &MySqlPool, user_id: u64) -> Result<(String, String), ApiError> {
     // Abgelaufene Tokens bei der Gelegenheit aufraeumen.
     sqlx::query("DELETE FROM auth_tokens WHERE expires_at <= UTC_TIMESTAMP()")
         .execute(pool)
@@ -404,6 +404,9 @@ pub fn router() -> Router<MySqlPool> {
         .route("/api/player-reports/{id}", put(update_report))
         .route("/api/player-reports/{id}", delete(delete_report))
         .route("/api/player-reports/{id}/review", post(update_report))
+        // Google-/GitHub-Anmeldung. Liegt in einem eigenen Modul, weil der
+        // Authorization-Code-Flow eigene Umleitungen statt JSON benutzt.
+        .merge(crate::oauth::routes())
 }
 
 /// Kennung aus dem Pfad, `game_sessions.id` also eine Zahl.

@@ -1,5 +1,6 @@
 import { GameSessionWindow } from "./GameSessionWindow";
-import LoginView from "./LoginView";
+import { Login, type LoginFormValues } from "./pages/Login";
+import { OAuthCallbackPage } from "./pages/OAuthCallback";
 import ProfileView from "./ProfileView";
 import CameraView from "./CameraView";
 import { Notice } from "./components/ui";
@@ -9,6 +10,7 @@ import PlayView from "./PlayView";
 import RatingsView from "./RatingsView";
 import ReportsView from "./ReportsView";
 import SessionsView from "./SessionsView";
+import { api } from "./lib/api";
 import { useAuth } from "./lib/auth";
 import { canViewCamera, canViewReports, canViewSessions } from "./lib/permissions";
 import { useNavigate, useRoute } from "./router";
@@ -28,10 +30,20 @@ export const App: React.FC = () => {
   const navigate = useNavigate();
   const { user, token } = useAuth();
 
-  if (route.name === "login") return <LoginView />;
+  async function handleLogin(values: LoginFormValues): Promise<void> {
+    // Die Anmeldung akzeptiert E-Mail oder Benutzername; das Formular nutzt die E-Mail.
+    await api.login({ email: values.email, password: values.password });
+    navigate("/");
+  }
+
+  if (route.name === "login") return <Login onSubmit={handleLogin} />;
+
+  // Rückkehr von Google/GitHub: das Token liegt im URL-Fragment und wird
+  // hier geprüft und gespeichert. Läuft unabhängig vom gespeicherten Profil.
+  if (route.name === "oauthCallback") return <OAuthCallbackPage />;
 
   // Kein Token oder kein gespeichertes Profil: kein Zugriff auf die App.
-  if (token === null || user === null) return <LoginView />;
+  if (token === null || user === null) return <Login onSubmit={handleLogin} />;
 
   switch (route.name) {
     case "profile":

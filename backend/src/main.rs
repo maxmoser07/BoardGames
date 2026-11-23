@@ -13,6 +13,7 @@ mod player;
 
 mod api;
 mod db;
+mod oauth;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +25,11 @@ pub enum GamesNames {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
+
+    // reqwest/rustls braucht einen Crypto-Provider. sqlx bringt ring bereits mit;
+    // hier wird er als Standard gesetzt, damit auch der OAuth-Client HTTPS kann.
+    // Ein bereits installierter Provider bleibt unveraendert.
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     let url = std::env::var("DATABASE_URL").context(
         "DATABASE_URL is not set - copy backend/.env.example to backend/.env",
