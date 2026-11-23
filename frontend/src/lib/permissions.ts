@@ -82,6 +82,21 @@ export function canOpenSession(
   );
 }
 
+/**
+ * Meldung waehrend einer Sitzung: nur wer selbst mitspielt. Die andere Seite
+ * wird im Formular gewaehlt; das Backend prueft dieselbe Zugehoerigkeit noch
+ * einmal.
+ */
+export function canReportPlayer(
+  userId: number | undefined,
+  session: Pick<GameSession, "players">,
+): boolean {
+  return (
+    userId !== undefined &&
+    (session.players.red === userId || session.players.yellow === userId)
+  );
+}
+
 /** Aufgeben darf man nur selbst; Admins duerfen es erzwingen. */
 export function canSurrenderSeat(
   role: UserRole | undefined,

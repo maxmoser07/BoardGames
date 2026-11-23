@@ -904,6 +904,18 @@ a {
   border-top: 1px solid var(--border);
 }
 
+/* Meldeformular: eingeklappt nur ein Button, geoeffnet ein Panel in der
+   Breite des Fensters. */
+.window__report {
+  display: flex;
+  justify-content: center;
+}
+
+.window__report > .panel {
+  width: 100%;
+  text-align: left;
+}
+
 /* ------------------------------------------------------------- 6. Seiten */
 
 .hero {

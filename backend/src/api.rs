@@ -2950,23 +2950,69 @@ pub async fn create_report(
     payload: Result<Json<CreateReportDto>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
-    user.require_manage_reports()?;
+    // Melden darf jede angemeldete, nicht gesperrte Person. Das Verwalten
+    // (lesen, pruefen, loeschen) bleibt der Administration vorbehalten.
+    user.require_write()?;
 
     let reason = dto.reason.trim();
     if reason.is_empty() {
         return bad("reason must not be empty".into());
     }
+    if reason.chars().count() > 128 {
+        return bad("reason must not exceed 128 characters".into());
+    }
     ensure_user_exists(&pool, dto.reported_user_id, "reported user").await?;
+    if dto.reported_user_id == user.id {
+        return bad("you cannot report yourself".into());
+    }
+
     if let Some(session_id) = dto.session_id {
-        let exists = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM game_sessions WHERE id = ?",
+        require_session(&pool, session_id).await?;
+
+        // Spieler:innen melden waehrend einer Sitzung. Gemeldet werden darf nur,
+        // wer selbst an dieser Sitzung teilnimmt. Admins duerfen weiterhin
+        // Meldungen ohne diese Bindung anlegen (Verwaltungsansicht).
+        if !user.can_manage_reports {
+            let participants = sqlx::query_scalar::<_, u64>(
+                "SELECT user_id FROM game_session_players
+                 WHERE session_id = ? AND user_id IS NOT NULL",
+            )
+            .bind(session_id)
+            .fetch_all(&pool)
+            .await
+            .map_err(internal)?;
+
+            if !participants.contains(&user.id) {
+                return Err(ApiError::Forbidden(
+                    "only participants of this session may report a player".into(),
+                ));
+            }
+            if !participants.contains(&dto.reported_user_id) {
+                return bad("reported user is not a participant of this session".into());
+            }
+        }
+    } else if !user.can_manage_reports {
+        return bad("session_id is required to report a player".into());
+    }
+
+    // Eine offene Meldung pro Person und Sitzung genuegt: sonst entstehen aus
+    // einem einzigen Vorfall beliebig viele Eintraege in der Verwaltung.
+    if !user.can_manage_reports {
+        let open_duplicate = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM player_reports
+             WHERE reporter_id = ? AND reported_user_id = ? AND session_id = ?
+               AND status = 'open'",
         )
-        .bind(session_id)
+        .bind(user.id)
+        .bind(dto.reported_user_id)
+        .bind(dto.session_id)
         .fetch_one(&pool)
         .await
         .map_err(internal)?;
-        if exists == 0 {
-            return Err(ApiError::NotFound(format!("no session with id {session_id}")));
+        if open_duplicate > 0 {
+            return Err(ApiError::Conflict(
+                "this player has already been reported for this session".into(),
+            ));
         }
     }
 

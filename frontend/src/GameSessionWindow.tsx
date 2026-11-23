@@ -5,6 +5,7 @@ import ConnectFourGame from "./ConnectFourGame";
 import { GameBoard } from "./games/GameBoard";
 import { GamePreview } from "./components/GamePreview";
 import { Logo } from "./components/Logo";
+import { ReportPlayer } from "./components/ReportPlayer";
 import { Avatar, Badge, Notice, Spinner } from "./components/ui";
 import { useLiveData } from "./hooks/useLiveData";
 import { useNow } from "./hooks/useNow";
@@ -14,7 +15,12 @@ import { useAuth } from "./lib/auth";
 import { formatDateTime, formatDuration } from "./lib/format";
 import { findGameType, usesClassicConnectFour } from "./lib/gameTypes";
 import { installGameResultEndpoint } from "./lib/gameResultEndpoint";
-import { canManageSession, canOpenSession, canSurrenderSeat } from "./lib/permissions";
+import {
+  canManageSession,
+  canOpenSession,
+  canReportPlayer,
+  canSurrenderSeat,
+} from "./lib/permissions";
 import { useNavigate, windowPath } from "./router";
 import {
   SIDE_LABEL,
@@ -266,6 +272,12 @@ function SessionBody({ session, gameType, users, role, userId }: SessionBodyProp
         <Notice tone="info" title="Freundschaftsspiel">
           Diese Partie wird gespeichert, ändert aber keine Wertung.
         </Notice>
+      ) : null}
+
+      {/* Melden ist nur fuer die beiden Mitwirkenden gedacht; Admins haben
+          ihre eigene Verwaltungsansicht. Die Meldung haengt an dieser Sitzung. */}
+      {userId !== undefined && canReportPlayer(userId, session) ? (
+        <ReportPlayer session={session} users={users} reporterId={userId} />
       ) : null}
 
       {feedback ? <Notice tone="danger">{feedback}</Notice> : null}

@@ -38,6 +38,7 @@ import {
 import { parseRoute, setupPath, windowPath } from "../src/router.ts";
 import {
   canManageGames,
+  canReportPlayer,
   canViewCamera,
   canViewLeaderboard,
   canViewReports,
@@ -549,6 +550,15 @@ describe("Rollenmatrix", () => {
     assert.equal(canManageGames("player"), false);
     assert.equal(canManageGames("host"), false);
     assert.equal(canManageGames("admin"), true);
+  });
+
+  it("laesst nur Mitwirkende einer Sitzung Spieler melden", () => {
+    const session = { players: { red: 2, yellow: 3 } };
+
+    assert.equal(canReportPlayer(undefined, session), false);
+    assert.equal(canReportPlayer(1, session), false);
+    assert.equal(canReportPlayer(2, session), true);
+    assert.equal(canReportPlayer(3, session), true);
   });
 });
 
