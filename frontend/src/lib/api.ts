@@ -90,6 +90,13 @@ export interface CreateSessionInput {
   friendly?: boolean;
 }
 
+export interface LoginInput {
+  /** Benutzername oder E-Mail – mindestens eines muss gesetzt sein. */
+  username?: string;
+  email?: string;
+  password: string;
+}
+
 export interface RecordGameContext {
   sessionId: string | null;
   players: Record<Side, number | null>;
@@ -109,8 +116,10 @@ export interface Api {
   declineFriendRequest(id: number): Promise<FriendRequest>;
   cancelFriendRequest(id: number): Promise<void>;
   removeFriend(userId: number): Promise<void>;
-  login(username: string, password: string): Promise<User>;
+  login(input: LoginInput): Promise<User>;
   register(input: { username: string; password: string; email?: string | null }): Promise<User>;
+  /** Angemeldete Person; `token` nur für die Rückkehr aus dem OAuth-Flow. */
+  me(token?: string): Promise<User>;
   logout(): Promise<void>;
   getGameTypes(): Promise<GameType[]>;
   getGameType(name: string): Promise<GameType | null>;
@@ -486,10 +495,14 @@ async function removeFriend(userId: number): Promise<void> {
   notify();
 }
 
-async function login(username: string, password: string): Promise<User> {
+async function login(input: LoginInput): Promise<User> {
   const wire = await request<WireUser & { user?: WireUser; token?: string }>("/login", {
     method: "POST",
-    body: JSON.stringify({ username, password }),
+    body: JSON.stringify({
+      username: input.username,
+      email: input.email,
+      password: input.password,
+    }),
   });
   const user = toUser(wire.user ?? wire);
   if (typeof wire.token === "string" && wire.token !== "") signIn(user, wire.token);
@@ -504,6 +517,20 @@ async function register(input: { username: string; password: string; email?: str
   const user = toUser(wire.user ?? wire);
   if (typeof wire.token === "string" && wire.token !== "") signIn(user, wire.token);
   return user;
+}
+
+/**
+ * Prüft ein Token und liefert die zugehörige Person samt Rechten.
+ *
+ * Beim OAuth-Login steht das Token noch nicht im localStorage; deshalb kann es
+ * hier ausdrücklich mitgegeben werden. `request` setzt den Authorization-Header
+ * aus `getToken()`, der hier übergebene Wert hat Vorrang.
+ */
+async function me(token?: string): Promise<User> {
+  const wire = await request<WireUser & { user?: WireUser }>("/me", {
+    headers: token === undefined ? undefined : { Authorization: `Bearer ${token}` },
+  });
+  return toUser(wire.user ?? wire);
 }
 
 async function logout(): Promise<void> {
@@ -861,6 +888,7 @@ export const httpApi: Api = {
   removeFriend,
   login,
   register,
+  me,
   logout,
   getGameTypes,
   getGameType,

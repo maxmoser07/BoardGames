@@ -13,6 +13,7 @@
  *   /play                Auswahl für eine Partie ohne Sitzung
  *   /play/:name          Partie eines Spiels ohne Sitzung, direkt im Tab
  *   /camera              Physisches Brett per Laptop-Kamera tracken
+ *   /auth/callback       Rückkehr von Google/GitHub (Token im URL-Fragment)
  *   /:spiel/:id          Spielfeld-Fenster (wird als Pop-up geöffnet)
  */
 
@@ -21,6 +22,7 @@ import { useCallback, useEffect, useState } from "react";
 export type Route =
   | { name: "catalog" }
   | { name: "login" }
+  | { name: "oauthCallback" }
   | { name: "profile" }
   | { name: "setup"; gameName: string }
   | { name: "sessions" }
@@ -55,6 +57,7 @@ export function parseRoute(pathname: string): Route {
 
   if (path === "/") return { name: "catalog" };
   if (path === "/login") return { name: "login" };
+  if (path === "/auth/callback") return { name: "oauthCallback" };
   if (path === "/profile") return { name: "profile" };
   if (path === "/sessions") return { name: "sessions" };
   if (path === "/replays") return { name: "replays" };
