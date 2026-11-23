@@ -44,6 +44,10 @@ pub struct AuthUser {
     pub password_hash: String,
     pub is_locked: bool,
     pub locked_until: Option<chrono::NaiveDateTime>,
+    /// Fehlversuche seit dem letzten Erfolg; der Zaehler faengt nach
+    /// `LOGIN_ATTEMPT_WINDOW_MINUTES` wieder bei null an.
+    pub failed_attempts: u32,
+    pub last_failed_at: Option<chrono::NaiveDateTime>,
 }
 
 /// Zeile aus `game_types`.

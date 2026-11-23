@@ -26,10 +26,11 @@ use std::time::Duration;
 use axum::extract::{Path, Query, State};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
-use axum::Router;
+use axum::{Json, Router};
 use chrono::Utc;
 use rand::RngCore;
 use serde::Deserialize;
+use serde_json::json;
 use sqlx::mysql::MySqlPool;
 use sqlx::{MySql, Transaction};
 
@@ -44,8 +45,31 @@ const MAX_REDIRECT_LEN: usize = 255;
 
 pub fn routes() -> Router<MySqlPool> {
     Router::new()
+        .route("/api/auth/oauth/status", get(status))
         .route("/api/auth/oauth/{provider}/start", get(start))
         .route("/api/auth/oauth/{provider}/callback", get(callback))
+}
+
+/// `/api/auth/oauth/status`
+///
+/// Die Oberflaeche fragt das beim Laden der Anmeldung ab und zeigt nur
+/// Anbieter an, die auf dem Server wirklich konfiguriert sind. Die Route ist
+/// oeffentlich und nennt keine Geheimnisse, nur ob die Variablen gesetzt sind.
+async fn status() -> Json<serde_json::Value> {
+    Json(json!({
+        "google": provider_configured("google"),
+        "github": provider_configured("github"),
+    }))
+}
+
+fn provider_configured(key: &str) -> bool {
+    let prefix = match key {
+        "google" => "GOOGLE",
+        "github" => "GITHUB",
+        _ => return false,
+    };
+    !var(&format!("{prefix}_CLIENT_ID")).is_empty()
+        && !var(&format!("{prefix}_CLIENT_SECRET")).is_empty()
 }
 
 /* ------------------------------------------------------------------ Anbieter */

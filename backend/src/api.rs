@@ -1017,6 +1017,13 @@ pub struct RegisterDto {
     password: String,
 }
 
+/// Nach `MAX_LOGIN_ATTEMPTS` Fehlversuchen innerhalb des Zeitfensters wird das
+/// Konto fuer `LOGIN_LOCK_MINUTES` gesperrt. Das schuetzt gegen Durchprobieren
+/// von Passwoertern, ohne dass ein richtiger Login nach der Wartezeit scheitert.
+const MAX_LOGIN_ATTEMPTS: u32 = 5;
+const LOGIN_ATTEMPT_WINDOW_MINUTES: i64 = 15;
+const LOGIN_LOCK_MINUTES: i64 = 15;
+
 pub async fn login(
     State(pool): State<MySqlPool>,
     payload: Result<Json<LoginDto>, JsonRejection>,
@@ -1032,9 +1039,12 @@ pub async fn login(
         return bad("password is required".into());
     }
 
+    let now = Utc::now().naive_utc();
     let row = if !username.is_empty() {
         sqlx::query_as::<_, AuthUser>(
-            "SELECT id, email, password_hash, is_locked, locked_until FROM users WHERE username = ?",
+            "SELECT id, email, password_hash, is_locked, locked_until,
+                    failed_attempts, last_failed_at
+             FROM users WHERE username = ?",
         )
         .bind(&username)
         .fetch_optional(&pool)
@@ -1042,7 +1052,9 @@ pub async fn login(
         .map_err(|e| ApiError::Internal(e.into()))?
     } else {
         sqlx::query_as::<_, AuthUser>(
-            "SELECT id, email, password_hash, is_locked, locked_until FROM users WHERE email = ?",
+            "SELECT id, email, password_hash, is_locked, locked_until,
+                    failed_attempts, last_failed_at
+             FROM users WHERE email = ?",
         )
         .bind(&email)
         .fetch_optional(&pool)
@@ -1051,18 +1063,76 @@ pub async fn login(
     };
 
     let user = row.ok_or_else(|| ApiError::Unauthorized("invalid credentials".into()))?;
+
     if user.is_locked {
-        let still_locked = match user.locked_until {
-            None => true,
-            Some(until) => until > chrono::Utc::now().naive_utc(),
-        };
+        let still_locked = user.locked_until.map(|until| until > now).unwrap_or(true);
         if still_locked {
             return Err(ApiError::Forbidden("account is locked".into()));
         }
+        // Abgelaufene Sperre entfernen; sonst bleibt das Konto nach Ablauf
+        // dauerhaft gesperrt.
+        sqlx::query(
+            "UPDATE users
+             SET is_locked = FALSE, locked_until = NULL, locked_reason = NULL,
+                 failed_attempts = 0, last_failed_at = NULL
+             WHERE id = ?",
+        )
+        .bind(user.id)
+        .execute(&pool)
+        .await
+        .map_err(internal)?;
     }
+
     if !verify_password(&dto.password, &user.password_hash) {
+        let recent = user
+            .last_failed_at
+            .map(|last| now - last < chrono::Duration::minutes(LOGIN_ATTEMPT_WINDOW_MINUTES))
+            .unwrap_or(false);
+        let attempts = if recent {
+            user.failed_attempts.saturating_add(1)
+        } else {
+            1
+        };
+        let lock = attempts >= MAX_LOGIN_ATTEMPTS;
+        let locked_until = lock.then(|| now + chrono::Duration::minutes(LOGIN_LOCK_MINUTES));
+        let reason = lock.then(|| "Too many failed login attempts".to_string());
+
+        sqlx::query(
+            "UPDATE users
+             SET failed_attempts = ?, last_failed_at = ?,
+                 is_locked = ?, locked_until = ?, locked_reason = ?
+             WHERE id = ?",
+        )
+        .bind(attempts)
+        .bind(now)
+        .bind(lock)
+        .bind(locked_until)
+        .bind(reason)
+        .bind(user.id)
+        .execute(&pool)
+        .await
+        .map_err(internal)?;
+
+        if lock {
+            return Err(ApiError::Forbidden(format!(
+                "account is locked for {LOGIN_LOCK_MINUTES} minutes after too many failed login attempts"
+            )));
+        }
         return Err(ApiError::Unauthorized("invalid credentials".into()));
     }
+
+    // Erfolgreiche Anmeldung: Zaehler und eine allenfalls abgelaufene Sperre
+    // werden zurueckgesetzt.
+    sqlx::query(
+        "UPDATE users
+         SET failed_attempts = 0, last_failed_at = NULL,
+             is_locked = FALSE, locked_until = NULL, locked_reason = NULL
+         WHERE id = ?",
+    )
+    .bind(user.id)
+    .execute(&pool)
+    .await
+    .map_err(internal)?;
 
     let permissions = fetch_permissions(&pool, user.id).await?;
     let (token, expires_at) = issue_token(&pool, user.id).await?;
@@ -3237,6 +3307,16 @@ pub async fn update_admin_user(
     .execute(&pool)
     .await
     .map_err(internal)?;
+
+    // Beim Entsperren beginnt die Zaehlung wieder bei null; sonst wuerde der
+    // erste Fehlversuch nach einer Admin-Sperre sofort wieder sperren.
+    if !is_locked {
+        sqlx::query("UPDATE users SET failed_attempts = 0, last_failed_at = NULL WHERE id = ?")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .map_err(internal)?;
+    }
 
     Ok(Json(json!(fetch_admin_user(&pool, id).await?)))
 }

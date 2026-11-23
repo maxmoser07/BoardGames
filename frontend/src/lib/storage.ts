@@ -13,6 +13,8 @@
  */
 
 const PREFIX = "boardgames:v1:";
+/** Fuer "Remember me" = aus: Token und Profil gelten nur in diesem Tab. */
+const SESSION_PREFIX = "boardgames:session:v1:";
 
 export type Listener = () => void;
 
