@@ -1,70 +1,81 @@
 /* =============================================================================
-   Tailwind fuer die neue Oberflaeche (shadcn/ui)
-   =============================================================================
-   Die bestehende App nutzt src/index.css (eigenes Design-System, unlayered).
-   Damit die globalen Element-Regeln dort (h1, p, a, ...) die neuen
-   Utility-Klassen nicht ueberstimmen, werden die Utilities *unlayered*
-   eingebunden. Preflight bleibt bewusst aussen vor: index.css liefert bereits
-   einen Reset, und ein zweiter Reset koennte die alten Ansichten veraendern.
+   Tailwind bridge for the design system
+   -----------------------------------------------------------------------------
+   index.css owns the component layer and the semantic variables. This file
+   exposes the same uicolors.app palette to Tailwind utilities (`bg-brand-600`,
+   `text-slate-500`, …) and maps the shadcn-style `--ui-*` tokens used by the
+   small primitives in components/ui.
 
-   Alle shadcn-Variablen sind mit `--ui-` benannt, weil index.css bereits
-   `--border`, `--ring`, `--accent`, `--radius-*` usw. belegt. `@theme inline`
-   setzt die Utilities direkt auf var(--ui-...), sodass keine Kollision
-   entsteht.
+   Utilities stay unlayered so the global element rules in index.css cannot
+   override them; Preflight is intentionally omitted because index.css already
+   ships a reset.
    ========================================================================== */
 
 @import "tailwindcss/theme.css" layer(theme);
 @import "tailwindcss/utilities.css";
 
-/* ------------------------------------------------------------- Design-Tokens */
+/* ------------------------------------------------------------- Design tokens */
 
 :root {
-  --ui-radius: 0.625rem;
+  --ui-radius: 0.75rem;
 
   --ui-background: #ffffff;
-  --ui-foreground: #0a0a0a;
+  --ui-foreground: #0f172a;
   --ui-card: #ffffff;
-  --ui-card-foreground: #0a0a0a;
+  --ui-card-foreground: #0f172a;
   --ui-popover: #ffffff;
-  --ui-popover-foreground: #0a0a0a;
+  --ui-popover-foreground: #0f172a;
   --ui-primary: #4f46e5;
   --ui-primary-foreground: #ffffff;
-  --ui-secondary: #f5f5f5;
-  --ui-secondary-foreground: #171717;
-  --ui-muted: #f5f5f5;
-  --ui-muted-foreground: #737373;
-  --ui-accent: #f5f5f5;
-  --ui-accent-foreground: #171717;
-  --ui-destructive: #dc2626;
-  --ui-border: #e5e5e5;
-  --ui-input: #e5e5e5;
+  --ui-secondary: #f8fafc;
+  --ui-secondary-foreground: #1e293b;
+  --ui-muted: #f1f5f9;
+  --ui-muted-foreground: #64748b;
+  --ui-accent: #eef2ff;
+  --ui-accent-foreground: #3730a3;
+  --ui-destructive: #b91c1c;
+  --ui-border: #e2e8f0;
+  --ui-input: #e2e8f0;
   --ui-ring: #6366f1;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --ui-background: #0a0a0a;
-    --ui-foreground: #fafafa;
-    --ui-card: #171717;
-    --ui-card-foreground: #fafafa;
-    --ui-popover: #171717;
-    --ui-popover-foreground: #fafafa;
+    --ui-background: #0a0f1d;
+    --ui-foreground: #e9eefb;
+    --ui-card: #111a2c;
+    --ui-card-foreground: #e9eefb;
+    --ui-popover: #141f34;
+    --ui-popover-foreground: #e9eefb;
     --ui-primary: #818cf8;
-    --ui-primary-foreground: #1e1b4b;
-    --ui-secondary: #262626;
-    --ui-secondary-foreground: #fafafa;
-    --ui-muted: #262626;
-    --ui-muted-foreground: #a3a3a3;
-    --ui-accent: #262626;
-    --ui-accent-foreground: #fafafa;
-    --ui-destructive: #ef4444;
-    --ui-border: #262626;
-    --ui-input: #262626;
-    --ui-ring: #818cf8;
+    --ui-primary-foreground: #0b1020;
+    --ui-secondary: #16213a;
+    --ui-secondary-foreground: #e9eefb;
+    --ui-muted: #1d2a45;
+    --ui-muted-foreground: #b3c0d6;
+    --ui-accent: #1d2a45;
+    --ui-accent-foreground: #e9eefb;
+    --ui-destructive: #f87171;
+    --ui-border: #253350;
+    --ui-input: #253350;
+    --ui-ring: #a5b4fc;
   }
 }
 
 @theme inline {
+  /* uicolors.app brand scale, generated from #4f46e5 */
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-200: #c7d2fe;
+  --color-brand-300: #a5b4fc;
+  --color-brand-400: #818cf8;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+  --color-brand-800: #3730a3;
+  --color-brand-900: #312e81;
+  --color-brand-950: #1e1b4b;
+
   --color-background: var(--ui-background);
   --color-foreground: var(--ui-foreground);
   --color-card: var(--ui-card);
@@ -87,5 +98,5 @@
   --radius-sm: calc(var(--ui-radius) - 4px);
   --radius-md: calc(var(--ui-radius) - 2px);
   --radius-lg: var(--ui-radius);
-  --radius-xl: calc(var(--ui-radius) + 4px);
+  --radius-xl: calc(var(--ui-radius) + 6px);
 }

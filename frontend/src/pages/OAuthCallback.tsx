@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, Dice5, LoaderCircle } from "lucide-react";
+import { AlertCircle, LoaderCircle } from "lucide-react";
 
+import { Logo } from "@/components/Logo";
 import { api } from "@/lib/api";
 import { signIn } from "@/lib/auth";
 import { useNavigate } from "@/router";
@@ -57,42 +58,69 @@ export function OAuthCallbackPage() {
     })();
   }, [navigate]);
 
-  return (
-    <main className="grid min-h-dvh place-items-center bg-neutral-50 px-4 text-neutral-900 antialiased dark:bg-neutral-950 dark:text-neutral-50">
-      <div className="w-full max-w-sm text-center">
-        <span className="mx-auto mb-5 grid size-11 place-items-center rounded-xl bg-linear-to-br from-indigo-500 to-violet-600 text-white shadow-lg shadow-indigo-600/25">
-          <Dice5 aria-hidden="true" className="size-6" />
-        </span>
+  const failed = error !== null;
 
-        {error === null ? (
-          <>
-            <h1 className="text-xl font-semibold tracking-tight">Anmeldung wird abgeschlossen…</h1>
-            <p className="mt-2 flex items-center justify-center gap-2 text-sm text-neutral-500 dark:text-neutral-400">
-              <LoaderCircle aria-hidden="true" className="size-4 animate-spin" />
-              Einen Moment bitte.
-            </p>
-          </>
-        ) : (
-          <>
-            <h1 className="text-xl font-semibold tracking-tight">Anmeldung fehlgeschlagen</h1>
-            <p
-              role="alert"
-              className="mt-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-left text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300"
-            >
-              <AlertCircle aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-              <span>{error}</span>
-            </p>
-            <button
-              type="button"
-              onClick={() => navigate("/login")}
-              className="mt-6 h-11 w-full rounded-lg bg-indigo-600 text-sm font-semibold text-white shadow-lg shadow-indigo-600/20 transition-colors hover:bg-indigo-500 focus-visible:ring-2 focus-visible:ring-indigo-500/60 focus-visible:outline-none"
-            >
-              Zurück zur Anmeldung
-            </button>
-          </>
-        )}
-      </div>
-    </main>
+  return (
+    <div className="auth auth--solo">
+      <main className="auth__main">
+        <div className="auth__panel">
+          <header className="auth__brand">
+            <Logo />
+            <span className="auth__brand-text">
+              <span className="auth__brand-name">BoardGames</span>
+              <span className="auth__brand-tag">Spielabend-Zentrale</span>
+            </span>
+          </header>
+
+          <section
+            className="card auth__card auth__card--center"
+            aria-labelledby="oauth-title"
+            aria-live="polite"
+          >
+            <span className="auth__status-icon" data-tone={failed ? "danger" : "info"} aria-hidden="true">
+              {failed ? <AlertCircle size={22} /> : <LoaderCircle className="auth__spin" size={22} />}
+            </span>
+
+            <div className="auth__intro">
+              <h1 id="oauth-title" className="auth__title">
+                {failed ? "Anmeldung fehlgeschlagen" : "Anmeldung wird abgeschlossen …"}
+              </h1>
+              <p className="auth__lead">
+                {failed
+                  ? "Der Anmeldedienst hat die Sitzung nicht bestätigt."
+                  : "Einen Moment bitte – wir prüfen dein Konto und öffnen den Katalog."}
+              </p>
+            </div>
+
+            {failed ? (
+              <>
+                <p className="field__error field__error--box" role="alert">
+                  <AlertCircle aria-hidden="true" size={15} />
+                  {error}
+                </p>
+                <button
+                  type="button"
+                  className="btn btn--primary auth__submit"
+                  onClick={() => navigate("/login")}
+                >
+                  Zurück zur Anmeldung
+                </button>
+              </>
+            ) : (
+              <p className="auth__waiting">
+                <LoaderCircle aria-hidden="true" className="auth__spin" size={16} />
+                Verbindung wird hergestellt …
+              </p>
+            )}
+          </section>
+
+          <p className="auth__security">
+            <AlertCircle aria-hidden="true" size={14} />
+            Das Token wird sofort aus der Adresszeile entfernt und nicht gespeichert.
+          </p>
+        </div>
+      </main>
+    </div>
   );
 }
 

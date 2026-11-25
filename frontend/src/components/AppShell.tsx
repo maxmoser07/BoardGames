@@ -1,9 +1,22 @@
-import type { ReactNode } from "react";
-import { Camera, CircleUser, Flag, History, LayoutGrid, Play, Settings, ShieldCheck, Trophy } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import {
+  Camera,
+  CircleUser,
+  Flag,
+  History,
+  LayoutGrid,
+  LogOut,
+  Menu,
+  Play,
+  Settings,
+  ShieldCheck,
+  Trophy,
+  X,
+} from "lucide-react";
 
 import { api } from "../lib/api";
 import { signOut, useAuth } from "../lib/auth";
-import { ROLE_LABEL } from "../lib/format";
+import { ROLE_LABEL, initials } from "../lib/format";
 import { canManageGames, canViewCamera, canViewReports, canViewSessions } from "../lib/permissions";
 import { useNavigate } from "../router";
 import type { UserRole } from "../types";
@@ -68,23 +81,44 @@ const NAV = [
   { path: "/profile", label: "Profil", icon: CircleUser, match: "profile", visible: () => true },
 ] as const;
 
-/** Rahmen des Katalogs, der Sitzungen und der Meldungen. */
+/** Rahmen aller angemeldeten Ansichten: Kopfzeile, Navigation, Inhalt, Fuß. */
 export function AppShell({ active, children }: AppShellProps) {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Escape schließt das Mobilmenü, damit die Tastatur nicht darin gefangen ist.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [menuOpen]);
+
+  const go = (path: string) => {
+    setMenuOpen(false);
+    navigate(path);
+  };
 
   return (
     <div className="shell">
-      <header className="shell__header">
-        <div className="shell__brand">
+      <header className="shell__header" data-menu-open={menuOpen}>
+        <button
+          type="button"
+          className="shell__brand"
+          onClick={() => go("/")}
+          aria-label="BoardGames – zum Katalog"
+        >
           <Logo />
-          <div>
-            <p className="shell__title">BoardGames</p>
-            <p className="shell__subtitle">Brettspielverwaltung</p>
-          </div>
-        </div>
+          <span className="shell__brand-text">
+            <span className="shell__title">BoardGames</span>
+            <span className="shell__subtitle">Spielabend-Zentrale</span>
+          </span>
+        </button>
 
-        <nav className="shell__nav" aria-label="Hauptnavigation">
+        <nav className="shell__nav" id="shell-nav" aria-label="Hauptnavigation">
           {NAV.filter(({ visible }) => (user ? visible(user.role) : false)).map(
             ({ path, label, icon: Icon, match }) => {
               const isActive = active === match;
@@ -96,7 +130,7 @@ export function AppShell({ active, children }: AppShellProps) {
                   type="button"
                   className={`shell__nav-link${isActive ? " is-active" : ""}`}
                   aria-current={isActive ? "page" : undefined}
-                  onClick={() => navigate(path)}
+                  onClick={() => go(path)}
                 >
                   <Icon aria-hidden="true" size={16} />
                   {text}
@@ -108,13 +142,21 @@ export function AppShell({ active, children }: AppShellProps) {
 
         {user ? (
           <div className="shell__user">
-            <span className="shell__user-label">
-              <ShieldCheck aria-hidden="true" size={14} />
-              {user.username} · {ROLE_LABEL[user.role]}
+            <span className="shell__user-label" title={`${user.username} · ${ROLE_LABEL[user.role]}`}>
+              <span className="avatar" data-role={user.role} aria-hidden="true">
+                {initials(user.username)}
+              </span>
+              <span className="shell__user-name">{user.username}</span>
+              <span className="chip chip--admin" hidden={user.role !== "admin"}>
+                <ShieldCheck aria-hidden="true" size={11} />
+                {ROLE_LABEL[user.role]}
+              </span>
             </span>
             <button
               type="button"
-              className="btn btn--sm"
+              className="btn btn--ghost btn--sm shell__logout"
+              aria-label="Abmelden"
+              title="Abmelden"
               onClick={async () => {
                 try {
                   await api.logout();
@@ -125,11 +167,22 @@ export function AppShell({ active, children }: AppShellProps) {
                 navigate("/login");
               }}
             >
-              Abmelden
+              <LogOut aria-hidden="true" size={14} />
+              <span className="shell__logout-label">Abmelden</span>
+            </button>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm shell__menu-btn"
+              aria-expanded={menuOpen}
+              aria-controls="shell-nav"
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              {menuOpen ? <X aria-hidden="true" size={16} /> : <Menu aria-hidden="true" size={16} />}
+              Menü
             </button>
           </div>
         ) : (
-          <button type="button" className="btn btn--sm btn--primary" onClick={() => navigate("/login")}>
+          <button type="button" className="btn btn--primary btn--sm" onClick={() => go("/login")}>
             Anmelden
           </button>
         )}
@@ -139,7 +192,7 @@ export function AppShell({ active, children }: AppShellProps) {
 
       <footer className="shell__footer">
         <p>
-          Sitzungen und Verläufe liegen in der Datenbank des Backends (siehe <code>src/lib/api.ts</code>)
+          Sitzungen, Verläufe und Ratings liegen in der Datenbank des Backends – nicht im Browser.
         </p>
       </footer>
     </div>

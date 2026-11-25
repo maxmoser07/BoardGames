@@ -76,13 +76,13 @@ const Catalog: React.FC = () => {
       <section className="hero">
         <div className="hero__text">
           <p className="hero__eyebrow">
-            <Sparkles aria-hidden="true" size={15} />
+            <Sparkles aria-hidden="true" size={14} />
             Brettspielverwaltung
           </p>
           <h1 className="hero__title">Spiele</h1>
           <p className="hero__lead">
-            Wähle ein Spiel und richte die Partie ein. Rot beginnt, Gelb zieht nach – Sitzungen und Spielverläufe
-            werden für alle Spiele gemeinsam verwaltet.
+            Wähle ein Spiel und richte die Partie ein. Rot beginnt, Gelb zieht nach – Sitzungen,
+            Verläufe und Ratings werden für alle Spiele gemeinsam verwaltet.
           </p>
         </div>
 
@@ -107,6 +107,9 @@ const Catalog: React.FC = () => {
           <h2 className="section-title" id="catalog-title">
             <LayoutGrid aria-hidden="true" size={18} />
             Alle Spiele
+            {!loading && !loadError ? (
+              <span className="badge">{visible.length} von {catalog.length}</span>
+            ) : null}
           </h2>
 
           <label className="search">
@@ -147,31 +150,37 @@ const Catalog: React.FC = () => {
       <section className="catalog-notes" aria-label="Hinweise">
         {canViewSessions(user?.role) ? (
           <p>
-            <History aria-hidden="true" size={15} />
-            Sitzungen und Verläufe aller Spiele findest du unter{" "}
-            <button type="button" className="link" onClick={() => navigate("/sessions")}>
-              Sitzungen
-            </button>
-            .
+            <History aria-hidden="true" size={16} />
+            <span>
+              Sitzungen und Verläufe aller Spiele findest du unter{" "}
+              <button type="button" className="link" onClick={() => navigate("/sessions")}>
+                Sitzungen
+              </button>
+              .
+            </span>
           </p>
         ) : (
           <p>
-            <History aria-hidden="true" size={15} />
-            Deine Partien startest du direkt im Spiel oder unter{" "}
-            <button type="button" className="link" onClick={() => navigate("/play")}>
-              Direkt spielen
-            </button>
-            . Beendete Partien kannst du unter{" "}
-            <button type="button" className="link" onClick={() => navigate("/replays")}>
-              Verläufe
-            </button>{" "}
-            nachspielen.
+            <History aria-hidden="true" size={16} />
+            <span>
+              Deine Partien startest du direkt im Spiel oder unter{" "}
+              <button type="button" className="link" onClick={() => navigate("/play")}>
+                Direkt spielen
+              </button>
+              . Beendete Partien kannst du unter{" "}
+              <button type="button" className="link" onClick={() => navigate("/replays")}>
+                Verläufe
+              </button>{" "}
+              nachspielen.
+            </span>
           </p>
         )}
         <p>
-          <Users aria-hidden="true" size={15} />
-          {playableCount} von {catalog.length} Spielen sind umgesetzt. Die übrigen sind in der Datenbank angelegt
-          und dienen der Übersicht.
+          <Users aria-hidden="true" size={16} />
+          <span>
+            {playableCount} von {catalog.length} Spielen sind umgesetzt. Die übrigen sind in der
+            Datenbank angelegt und dienen der Übersicht.
+          </span>
         </p>
       </section>
     </AppShell>
