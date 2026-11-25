@@ -546,6 +546,17 @@ Balken, die häufigsten Gründe, den Monatsverlauf und die am häufigsten
 gemeldeten Personen. Die Ansicht ist der Administration vorbehalten; die Daten
 kommen aus `GET /api/reports/visualisation` und werden nur für Admins geladen.
 
+Nimmt ein Admin eine Meldung an, indem er sie auf `resolved` setzt, sperrt das
+Backend das gemeldete Konto in derselben Transaktion: `is_locked = TRUE`,
+`locked_until = NULL` (unbefristet) und `locked_reason` mit dem Hinweis auf die
+Meldung. Die Sperre wirkt sofort, auch für bereits ausgegebene Tokens, weil die
+Rechte bei jeder Anfrage neu aus `v_user_permissions` gelesen werden. Wird die
+Meldung später wieder geöffnet, auf `reviewed` zurückgesetzt, verworfen oder
+gelöscht, hebt das Backend eine von genau dieser Meldung gesetzte Sperre wieder
+auf; der Marker im `locked_reason` verhindert, dass andere Sperren angefasst
+werden. Alternativ lässt sie sich über die Benutzerverwaltung
+(`PATCH /api/admin/users/{id}`) aufheben.
+
 ### Routen
 
 | Pfad               | Ansicht                                                        | Zugriff                    |
@@ -853,8 +864,8 @@ Datenzugriff der Oberfläche. Die Tabelle nennt deshalb auch die passende
 | GET     | `/api/reports/visualisation`            | Aggregierte Meldungs-Visualisierung (nur Admin) | `getReportOverview` | `player_reports`, `users` |
 | POST    | `/api/reports`                          | Meldung anlegen (nur Admin)            | `createReport`          | `player_reports` |
 | GET     | `/api/reports/{id}`                     | eine Meldung (nur Admin)               | –                       | `player_reports` |
-| PATCH   | `/api/reports/{id}`                     | Meldung prüfen / Status ändern (nur Admin) | `updateReport`      | dito |
-| DELETE  | `/api/reports/{id}`                     | Meldung löschen (nur Admin)            | `deleteReport`          | dito |
+| PATCH   | `/api/reports/{id}`                     | Meldung prüfen / Status ändern (nur Admin); `resolved` sperrt das gemeldete Konto, andere Status heben diese Sperre auf | `updateReport`      | `player_reports`, `users` |
+| DELETE  | `/api/reports/{id}`                     | Meldung löschen (nur Admin); hebt eine von ihr gesetzte Sperre auf | `deleteReport`          | `player_reports`, `users` |
 
 ### Freundschaften
 

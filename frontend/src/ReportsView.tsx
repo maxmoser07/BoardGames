@@ -87,7 +87,9 @@ const ReportsView: React.FC = () => {
           </p>
           <h1 className="hero__title">Spieler-Meldungen</h1>
           <p className="hero__lead">
-            Meldungen über Spieler einsehen, prüfen und mit einer Aktion versehen.
+            Meldungen über Spieler einsehen, prüfen und mit einer Aktion versehen. Das Erledigen
+            einer Meldung sperrt das Konto der gemeldeten Person; Verwerfen hebt diese Sperre wieder
+            auf.
           </p>
         </div>
       </section>

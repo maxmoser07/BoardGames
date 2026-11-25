@@ -3138,11 +3138,21 @@ pub async fn update_report(
     let Json(dto) = payload.map_err(|e| ApiError::BadRequest(e.body_text()))?;
 
     // Die Meldung muss existieren, bevor etwas geaendert wird.
-    let _ = fetch_report(&pool, id).await?;
+    let report = fetch_report(&pool, id).await?;
 
     if let Some(status) = &dto.status {
         validate_report_status(status)?;
     }
+
+    // Das Annehmen einer Meldung sperrt das gemeldete Konto. Beides gehoert in
+    // eine Transaktion, damit eine Meldung nie angenommen wird, ohne dass die
+    // Sperre greift.
+    let accepted = dto.status.as_deref() == Some("resolved");
+    if accepted && report.reported_user_id == user.id {
+        return bad("admins cannot lock their own account".into());
+    }
+
+    let mut tx = pool.begin().await.map_err(internal)?;
 
     match dto.status.as_deref() {
         Some("open") => {
@@ -3157,7 +3167,7 @@ pub async fn update_report(
             .bind(dto.admin_note)
             .bind(user.id)
             .bind(id)
-            .execute(&pool)
+            .execute(&mut *tx)
             .await
             .map_err(internal)?;
         }
@@ -3174,7 +3184,7 @@ pub async fn update_report(
             .bind(dto.admin_note)
             .bind(user.id)
             .bind(id)
-            .execute(&pool)
+            .execute(&mut *tx)
             .await
             .map_err(internal)?;
         }
@@ -3188,14 +3198,85 @@ pub async fn update_report(
             .bind(dto.admin_note)
             .bind(user.id)
             .bind(id)
-            .execute(&pool)
+            .execute(&mut *tx)
             .await
             .map_err(internal)?;
         }
     }
 
+    if accepted {
+        lock_reported_user(&mut tx, &report).await?;
+    } else if dto.status.is_some() {
+        // Wird eine angenommene Meldung wieder geoeffnet, erneut geprueft oder
+        // verworfen, faellt die von ihr gesetzte Sperre wieder weg. Andere
+        // Sperren bleiben unberuehrt, weil nur der Meldungs-Marker passt.
+        unlock_reported_user(&mut tx, &report).await?;
+    }
+
+    tx.commit().await.map_err(internal)?;
+
     let report = fetch_report(&pool, id).await?;
     Ok(Json(json!(report)))
+}
+
+/// Praefix, an dem eine von dieser Meldung gesetzte Sperre erkennbar ist.
+fn report_lock_marker(report: &PlayerReport) -> String {
+    format!("Report #{} accepted:", report.id)
+}
+
+/// Grund der Sperre; passt in `users.locked_reason` (VARCHAR(255)).
+fn report_lock_reason(report: &PlayerReport) -> String {
+    // Spaltenbreite von `users.locked_reason`.
+    const MAX_REASON_LEN: usize = 255;
+
+    let mut reason = format!("{} {}", report_lock_marker(report), report.reason);
+    if reason.chars().count() > MAX_REASON_LEN {
+        reason = reason.chars().take(MAX_REASON_LEN).collect();
+    }
+    reason
+}
+
+/// Sperrt das gemeldete Konto, nachdem eine Meldung angenommen wurde.
+///
+/// Die Sperre ist unbefristet (`locked_until = NULL`) und laesst sich ueber die
+/// Benutzerverwaltung oder durch Verwerfen/Zuruecknehmen der Meldung wieder
+/// aufheben. `locked_reason` nennt die Meldung, damit die Herkunft der Sperre
+/// nachvollziehbar bleibt.
+async fn lock_reported_user(
+    tx: &mut Transaction<'_, MySql>,
+    report: &PlayerReport,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE users
+         SET is_locked = TRUE, locked_until = NULL, locked_reason = ?
+         WHERE id = ?",
+    )
+    .bind(report_lock_reason(report))
+    .bind(report.reported_user_id)
+    .execute(&mut **tx)
+    .await
+    .map_err(internal)?;
+    Ok(())
+}
+
+/// Hebt eine Sperre wieder auf, wenn sie von dieser Meldung stammt.
+async fn unlock_reported_user(
+    tx: &mut Transaction<'_, MySql>,
+    report: &PlayerReport,
+) -> Result<(), ApiError> {
+    let marker = report_lock_marker(report);
+    sqlx::query(
+        "UPDATE users
+         SET is_locked = FALSE, locked_until = NULL, locked_reason = NULL
+         WHERE id = ? AND LEFT(locked_reason, CHAR_LENGTH(?)) = ?",
+    )
+    .bind(report.reported_user_id)
+    .bind(&marker)
+    .bind(&marker)
+    .execute(&mut **tx)
+    .await
+    .map_err(internal)?;
+    Ok(())
 }
 
 pub async fn delete_report(
@@ -3205,12 +3286,18 @@ pub async fn delete_report(
 ) -> Result<Json<Value>, ApiError> {
     user.require_manage_reports()?;
     let id = path_id(id)?;
-    let _ = fetch_report(&pool, id).await?;
+    let report = fetch_report(&pool, id).await?;
+
+    let mut tx = pool.begin().await.map_err(internal)?;
     let result = sqlx::query("DELETE FROM player_reports WHERE id = ?")
         .bind(id)
-        .execute(&pool)
+        .execute(&mut *tx)
         .await
         .map_err(internal)?;
+    // Auch das Loeschen nimmt eine von dieser Meldung gesetzte Sperre zurueck.
+    unlock_reported_user(&mut tx, &report).await?;
+    tx.commit().await.map_err(internal)?;
+
     Ok(Json(json!({ "deleted": result.rows_affected() })))
 }
 
