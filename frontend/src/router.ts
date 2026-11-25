@@ -22,6 +22,7 @@ import { useCallback, useEffect, useState } from "react";
 export type Route =
   | { name: "catalog" }
   | { name: "login" }
+  | { name: "signup" }
   | { name: "oauthCallback" }
   | { name: "profile" }
   | { name: "setup"; gameName: string }
@@ -57,6 +58,7 @@ export function parseRoute(pathname: string): Route {
 
   if (path === "/") return { name: "catalog" };
   if (path === "/login") return { name: "login" };
+  if (path === "/signup") return { name: "signup" };
   if (path === "/auth/callback") return { name: "oauthCallback" };
   if (path === "/profile") return { name: "profile" };
   if (path === "/sessions") return { name: "sessions" };

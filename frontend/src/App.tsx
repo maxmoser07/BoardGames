@@ -1,5 +1,6 @@
 import { GameSessionWindow } from "./GameSessionWindow";
 import { Login, type LoginFormValues } from "./pages/Login";
+import { SignUp, type SignUpFormValues } from "./pages/SignUp";
 import { OAuthCallbackPage } from "./pages/OAuthCallback";
 import ProfileView from "./ProfileView";
 import CameraView from "./CameraView";
@@ -39,7 +40,20 @@ export const App: React.FC = () => {
     navigate("/");
   }
 
+  async function handleSignUp(values: SignUpFormValues): Promise<void> {
+    await api.register({
+      username: values.username,
+      password: values.password,
+      email: values.email === "" ? null : values.email,
+    });
+    navigate("/");
+  }
+
   if (route.name === "login") return <Login onSubmit={handleLogin} />;
+
+  // Die Registrierung ist auch ohne Anmeldung erreichbar; `api.register`
+  // speichert Token und Profil, danach greift die Rollenpruefung unten.
+  if (route.name === "signup") return <SignUp onSubmit={handleSignUp} />;
 
   // Rückkehr von Google/GitHub: das Token liegt im URL-Fragment und wird
   // hier geprüft und gespeichert. Läuft unabhängig vom gespeicherten Profil.
