@@ -4,6 +4,7 @@ import { formatRelative } from "../lib/format";
 import type { GameType } from "../types";
 import { GameArt } from "./GameArt";
 import { Badge } from "./ui";
+import { ShareQrButton } from "./ShareQrButton";
 
 export interface GameTally {
   games: number;
@@ -17,7 +18,7 @@ interface GameTileProps {
   onOpen: (game: GameType) => void;
 }
 
-/** Kachel im Spielekatalog: einen Blick aufs Spiel, Klick führt zu den Einstellungen. */
+/** Kachel im Spielekatalog: einen Blick aufs Spiel, Klick fuehrt zu den Einstellungen. */
 export function GameTile({ game, tally, onOpen }: GameTileProps) {
   return (
     <li className="tile" data-accent={game.accent} data-playable={game.implemented}>
@@ -70,6 +71,7 @@ export function GameTile({ game, tally, onOpen }: GameTileProps) {
           <p className="tile__last">Zuletzt gespielt {formatRelative(tally.lastPlayed)}</p>
         ) : null}
       </button>
+      <ShareQrButton gameName={game.name} className="btn btn--ghost btn--sm tile__qr" label="QR-Code" />
     </li>
   );
 }

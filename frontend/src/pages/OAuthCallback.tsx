@@ -34,16 +34,15 @@ export function OAuthCallbackPage() {
     // Token aus der Adresszeile nehmen, bevor irgendetwas anderes passiert.
     window.history.replaceState(null, "", "/auth/callback");
 
-    if (failure !== null && failure !== "") {
-      setError(failure);
-      return;
-    }
-    if (token === null || token === "") {
-      setError("Die Anmeldung wurde ohne Token beendet. Bitte versuche es erneut.");
-      return;
-    }
-
     void (async () => {
+      if (failure !== null && failure !== "") {
+        setError(failure);
+        return;
+      }
+      if (token === null || token === "") {
+        setError("Die Anmeldung wurde ohne Token beendet. Bitte versuche es erneut.");
+        return;
+      }
       try {
         const user = await api.me(token);
         signIn(user, token);
