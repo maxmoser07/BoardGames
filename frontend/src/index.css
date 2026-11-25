@@ -3033,3 +3033,120 @@ a {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* QR-Code-Teilen ------------------------------------------------------------- */
+
+.tile {
+  position: relative;
+}
+
+.tile__qr {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 2;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.75rem;
+}
+
+.share-qr-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 1000;
+}
+
+.share-qr-dialog {
+  width: min(26rem, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 1rem;
+}
+
+.share-qr-dialog__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.share-qr-dialog__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.share-qr-dialog__close {
+  padding: 0.25rem 0.4rem;
+}
+
+.share-qr-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.share-qr-dialog__code {
+  display: flex;
+  justify-content: center;
+  padding: 0.5rem;
+  background: #ffffff;
+  border-radius: var(--radius);
+}
+
+.share-qr-dialog__code svg {
+  width: 100%;
+  max-width: 16rem;
+  height: auto;
+}
+
+.share-qr-dialog__loading {
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.share-qr-dialog__url-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.share-qr-dialog__url {
+  width: 100%;
+}
+
+.share-qr-dialog__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.share-qr-dialog__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.share-qr-dialog__status--error {
+  color: var(--danger, #b91c1c);
+}
+
+.share-qr-dialog__hint {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin: 0;
+}

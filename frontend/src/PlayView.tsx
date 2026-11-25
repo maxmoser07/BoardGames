@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Dices, History, Play } from "lucide-react";
 import ConnectFourGame from "./ConnectFourGame";
 import { GameArt } from "./components/GameArt";
 import { GameCard } from "./components/GameCard";
+import { ShareQrButton } from "./components/ShareQrButton";
 import { Logo } from "./components/Logo";
 import { EmptyState, Notice, Skeleton } from "./components/ui";
 import { GameBoard } from "./games/GameBoard";
@@ -118,6 +119,7 @@ function GameChooser() {
                 </span>
               </div>
             </button>
+            <ShareQrButton gameName={game.name} className="btn btn--ghost btn--sm tile__qr" label="QR-Code" />
           </li>
         ))}
       </ul>
@@ -146,6 +148,10 @@ function DirectPlay({ game }: { game: GameType }) {
         Diese Partie gehört zu keiner Sitzung und ist ein Freundschaftsspiel: Der Verlauf wird
         gespeichert, die Wertung bleibt unverändert.
       </Notice>
+
+      <div className="panel__actions">
+        <ShareQrButton gameName={game.name} label="QR-Code teilen" />
+      </div>
 
       {usesClassicConnectFour(game) ? (
         <DirectConnectFour startedAt={mountedAt} />

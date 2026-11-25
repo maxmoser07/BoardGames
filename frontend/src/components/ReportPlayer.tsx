@@ -10,7 +10,7 @@ import { Notice } from "./ui";
  * verlangt eine Beschreibung, damit die Administration den Vorfall einordnen
  * kann.
  */
-export const REPORT_REASONS = [
+const REPORT_REASONS = [
   "Unsportliches Verhalten",
   "Beleidigung oder Belästigung",
   "Schummelverdacht",

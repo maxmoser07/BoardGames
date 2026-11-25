@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, BookOpen, Ban, Handshake, History, LayoutGrid, L
 import { GameArt } from "./components/GameArt";
 import { GameCard } from "./components/GameCard";
 import { PlayerPicker } from "./components/PlayerPicker";
+import { ShareQrButton } from "./components/ShareQrButton";
 import { Avatar, Badge, EmptyState, Notice, Skeleton, Spinner } from "./components/ui";
 import { useLiveData } from "./hooks/useLiveData";
 import { ApiError, api } from "./lib/api";
@@ -276,6 +277,7 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
                     <Play aria-hidden="true" size={16} />
                     Jetzt spielen
                   </button>
+                  <ShareQrButton gameName={gameTypes.name} label="QR-Code" />
                 </div>
                 <p className="hint">
                   Die Partie läuft direkt im Tab. Der Verlauf wird gespeichert, ohne dass eine Sitzung angelegt
@@ -395,6 +397,7 @@ const GameSetup: React.FC<Props> = ({ gameName }) => {
                   >
                     Ohne Sitzung spielen
                   </button>
+                  <ShareQrButton gameName={gameTypes.name} label="QR-Code" />
                 </div>
                 <p className="hint">
                   {friendly

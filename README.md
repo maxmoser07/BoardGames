@@ -266,6 +266,7 @@ ohnehin verboten wäre.
 | ---------------------------------------- | ------------- | ---------------- | ----------------- |
 | Spielen (auch `/play`)                   | ja            | ja               | ja                |
 | Katalog, Spielregeln, eigenes Profil     | ja            | ja               | ja                |
+| QR-Code für ein Spiel erzeugen          | ja            | ja               | ja                |
 | Sitzungen anlegen                        | nein          | eigene           | alle              |
 | Pause/Fortsetzen/Beenden                 | nein          | eigene Sitzung   | alle Sitzungen    |
 | Aufgeben                                 | eigener Platz | eigener Platz    | eigener/erzwungen |
@@ -279,6 +280,9 @@ ohnehin verboten wäre.
 | Benutzerverwaltung `/api/admin/users`    | nein          | nein             | ja                |
 | Spiele anlegen/löschen `/admin/games`    | nein          | nein             | ja                |
 | Beispieldaten löschen                    | nein          | nein             | ja                |
+
+QR-Code-Erzeugung für ein Spiel ist für alle Rollen (player, host, admin) verfügbar und ist
+kein Host-/Admin-Feature; es wird keine Rolle eingeschränkt.
 
 Ein **gesperrtes** Konto darf noch lesen, aber nichts schreiben: die
 Schreibrouten antworten mit `403`. Selbstregistrierung legt immer `player` an.
@@ -372,6 +376,8 @@ frontend/src/
     WinOdds.tsx            Balken, Legende und Zugtipp zu den Gewinnchancen
     CameraAnalysis.tsx     Live-Feedback, Drohungen und Zugqualität der Kamera
     ReportVisualisation.tsx Statusbalken, Gründe, Monatsverlauf und Top-Meldungen
+    ShareQrButton.tsx      Auslöser für den QR-Code (alle Rollen)
+    ShareQrDialog.tsx      Modal mit client-seitig erzeugtem QR-Code (SVG)
   games/                   Raster für neue Spiele, Tic Tac Toe, Memory, Schach, Mensch
     GameBoard.tsx          wählt das Brett anhand der Engine-Vorlage
     GridGame.tsx           konfigurierbares Raster (Brettmaße, Gewinnlänge, Gravity)
@@ -387,6 +393,7 @@ frontend/src/
     reportVisuals.ts       Aufbereitung der Status-, Grund- und Monatsdaten
     gameTypes.ts           Katalog, Engine-Vorlagen und Zusammenführung mit rules_json
     gameResultEndpoint.ts  ergänzt Sitzungs-Id und Spielzeit beim POST des Hooks
+    shareUrl.ts            reine Ableitung teilbarer URLs für den QR-Code
     connectFour.ts         Validierung eines abgeschlossenen Spielverlaufs
     connectFourOdds.ts     Monte-Carlo-Bewertung einer Stellung und Zugchancen
     cameraAnalysis.ts      Erkennungsfeedback, Drohungen und Zugnoten der Kamera
@@ -398,6 +405,7 @@ frontend/scripts/games.test.ts      Tests für die Spiellogik der neuen Bretter
 frontend/scripts/camera.test.ts     Tests für Geometrie, Farben, Detektor und Tracker
 frontend/scripts/cameraAnalysis.test.ts  Tests für Live-Feedback und Zuganalyse
 frontend/scripts/replay.test.ts     Tests für die Schrittlogik der Wiedergabe
+frontend/scripts/shareUrl.test.ts   Tests für die Ableitung teilbarer URLs (QR-Code)
 ```
 
 `lib/gameTypes.ts` beschreibt die fünf bekannten Spiele (Regeln, Vorschau,
@@ -923,7 +931,7 @@ notfalls mit dem Startwert und leeren Zählern.
 ## Prüfen
 
 ```bash
-npm test                    # Router, Spiellogik, Ableitungen, Wiedergabe, Kamera-Feedback, Ergebnis-Prüfung
+npm test                    # Router, Spiellogik, Ableitungen, Wiedergabe, Kamera-Feedback, Ergebnis-Prüfung, shareUrl
 npm run lint                # eslint inkl. React-Compiler-Regeln
 npm run build               # tsc -b && vite build -> frontend/dist/
 npm run backend:check       # cargo check
@@ -986,7 +994,6 @@ Kommentare in `backend/migrations/20250101000000_init_schema.sql`.
   ins Repository, wurde aber bewusst nicht entfernt. Die Dockerfiles schließen
   das Verzeichnis über `.dockerignore` aus, sonst wäre es Teil jedes
   Build-Kontexts.
-* **Kein TLS im Container.** nginx läuft auf Port 80 ohne Zertifikat; für eine
   öffentliche Instanz gehört ein Reverse Proxy davor.
 * Farben und Rollen stehen in `game_session_players.side`, nicht in festen
   Spalten: Rot ist Sitzplatz 0, Gelb Sitzplatz 1.
